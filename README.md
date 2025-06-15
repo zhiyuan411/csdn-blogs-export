@@ -94,6 +94,10 @@ article_ids:
 - `process_log`: 是否打印详细的处理过程日志
 - `action_interval_time`: 操作间隔时间（毫秒），设置过短易被 CSDN 屏蔽
 
+### 安装和配置实例
+
+[阿里云服务器自动定时备份CSDN博客内容](https://blog.csdn.net/zhiyuan411/article/details/143450143)
+
 ## 使用方法
 ### 脚本命令（基于 package.json）
 
