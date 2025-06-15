@@ -1,0 +1,23 @@
+{
+  "name": "csdn-blogs-export",
+  "version": "1.0.0",
+  "description": "https://github.com/zhiyuan411/csdn-blogs-export",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js run 3",
+    "test": "node index.js debug 1",
+    "debug": "node index.js debug 1",
+    "setup": "node index.js setup",
+    "login": "node index.js login",
+    "single": "node index.js single",
+    "all": "node index.js run"
+  },
+  "author": "cnfaq.cn",
+  "type": "module",
+  "dependencies": {
+    "puppeteer": "^21.11.0",
+    "moment": "^2.29.4",
+    "js-yaml": "^4.1.0"
+  }
+}
+

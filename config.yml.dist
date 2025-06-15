@@ -1,0 +1,54 @@
+# CSDN账号信息
+csdn:
+  user_id: 'your-id'       # 需要导出/备份的CSDN账号用户名
+  user_pwd: 'your-password'        # 需要导出/备份的CSDN账号密码
+
+# 目录配置
+directories:
+  user_data: './userData'     # 浏览器缓存和配置等的本地存储目录
+  default_download: './downloads'  # 下载的CSDN文章的默认本地存储目录
+  download_paths:  # 按主题分类的文章存储路径配置
+    '主题名称': './downloads/bak'
+
+# 通用配置
+general:
+  cookie_file: './cookie.txt'  # 存储登录Cookie的文件路径
+  process_log: true            # 是否打印详细的处理过程日志
+  action_interval_time: 2000   # 操作间隔时间（毫秒），设置过短易被CSDN屏蔽
+  page_reuse_limit: 10         # 单个页面对象的最大复用次数，超过后会重新打开新页面
+  viewport_width: 1080         # 模拟浏览器视窗宽度
+  viewport_height: 600         # 模拟浏览器视窗高度
+  debug_validation_time: 1800000  # 调试模式下在自动执行完毕后的验证等待时间（毫秒）
+  debug_login_time: 120000     # 调试模式下登录操作的等待时间（毫秒）
+  page_load_timeout:           # 页面加载超时配置（毫秒）
+    domcontentloaded: 30000    # domcontentloaded方式的超时时间（毫秒）
+    load: 60000                # load方式的超时时间（毫秒）
+    networkidle2: 60000        # networkidle2方式的超时时间（毫秒）
+  default_navigation_timeout: 60000  # 默认导航超时时间（毫秒）
+  login_redirect_wait_time: 10000  # 登录后的重定向跳转等待时间（毫秒）
+  scroll_multiplier: 4         # 滑动列表页面时的每次滚动距离（视窗高度的倍数）
+  replacements:                # 文章内容的字符串替换规则
+    - source: 'https://i-blog.csdnimg.cn'
+      target: 'https://csdnimg.your-domain'
+
+# 需要强制导出/备份的文章ID配置
+article_ids:
+  markdown_format_ids: [12345678, 87654321]  # Markdown格式文章的ID
+  old_format_ids: []       # 旧格式（富文本格式）文章的ID
+
+# Cookie配置
+cookies:
+  expires: 25920000           # Cookie有效期(秒)，默认300天，设置为-1表示仅会话Session生效
+  protected_cookies: ['SESSION', 'HMACCOUNT', 'UserToken']  # 需要将httpOnly和secure设置为true的Cookie
+
+# 浏览器启动参数
+browser:
+  launch_args:                # 浏览器启动参数配置，对于云服务器等低端宿主机应该放开下面的注释内容
+    # - '--no-sandbox' # 禁用沙盒
+    # - '--disable-setuid-sandbox' # 禁用 setuid 沙盒
+    # - '--disable-gpu' # 禁用 GPU 加速
+
+# 重试配置
+retry:
+  max_no_change_count: 10     # 如果多次滑动列表页面时获取的结果均无变化，则认为出现异常并中止滑动
+  max_retry_count: 2          # 操作失败时的最大重试次数
