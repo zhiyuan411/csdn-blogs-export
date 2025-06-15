@@ -47,6 +47,7 @@ browser:
     # - '--no-sandbox' # 禁用沙盒
     # - '--disable-setuid-sandbox' # 禁用 setuid 沙盒
     # - '--disable-gpu' # 禁用 GPU 加速
+    # - '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' # 自定义UA，当puppeteer依赖的Chrome版本较低被CSDN屏蔽时使用
 
 # 重试配置
 retry:
