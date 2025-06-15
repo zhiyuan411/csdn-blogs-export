@@ -43,7 +43,7 @@ cookies:
 
 # 浏览器启动参数
 browser:
-  launch_args:                # 浏览器启动参数配置，对于云服务器等低端宿主机应该放开下面的注释内容
+  launch_args: []                # 浏览器启动参数配置，默认为空数组，对于云服务器等低端宿主机应该去掉空数组并放开下面的注释内容
     # - '--no-sandbox' # 禁用沙盒
     # - '--disable-setuid-sandbox' # 禁用 setuid 沙盒
     # - '--disable-gpu' # 禁用 GPU 加速
