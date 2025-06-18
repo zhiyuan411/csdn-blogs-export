@@ -28,13 +28,25 @@ const {
     default_navigation_timeout: DEFAULT_NAVIGATION_TIMEOUT,
     login_redirect_wait_time: LOGIN_REDIRECT_WAIT_TIME,
     scroll_multiplier: SCROLL_MULTIPLIER,
-    replacements: REPLACEMENTS 
+    replacements: REPLACEMENTS,
+    spm: SPM
   },
   article_ids: { markdown_format_ids: MARKDOWN_FORMAT_IDS, old_format_ids: OLD_FORMAT_IDS },
   cookies: { expires: COOKIE_EXPIRES, protected_cookies: PROTECTED_COOKIES },
   browser: { launch_args: BROWSER_ARGS },
   retry: { max_no_change_count: MAX_NO_CHANGE_COUNT, max_retry_count: MAX_RETRY_COUNT }
 } = config;
+
+const SPM_PARAM_START = SPM ? "?spm=" + SPM : '';
+const SPM_PARAM_END = SPM ? "&spm=" + SPM : '';
+
+function appendSpmParam(urlStr) {
+    if (!SPM) return urlStr;
+
+    const url = new URL(urlStr);
+    url.searchParams.set('spm', SPM);
+    return url.toString();
+}
 
 
 // 等待指定的时间（毫秒）
@@ -88,14 +100,14 @@ let browser = await initBrowser(runMode === 'run' || runMode === 'single');
           // 生成Markdown格式文章信息
           ...MARKDOWN_FORMAT_IDS.map(id => ({
             articleId: id,
-            url: `https://blog.csdn.net/${CSDN_USER_ID}/article/details/${id}`,
-            editUrl: `https://editor.csdn.net/md?articleId=${id}`
+            url: `https://blog.csdn.net/${CSDN_USER_ID}/article/details/${id}${SPM_PARAM_START}`,
+            editUrl: `https://editor.csdn.net/md?articleId=${id}${SPM_PARAM_END}`
           })),
           // 生成旧格式文章信息
           ...OLD_FORMAT_IDS.map(id => ({
             articleId: id,
-            url: `https://blog.csdn.net/${CSDN_USER_ID}/article/details/${id}`,
-            editUrl: `https://mp.csdn.net/mp_blog/creation/editor/${id}`
+            url: `https://blog.csdn.net/${CSDN_USER_ID}/article/details/${id}${SPM_PARAM_START}`,
+            editUrl: `https://mp.csdn.net/mp_blog/creation/editor/${id}${SPM_PARAM_START}`
           }))
         ];
 
@@ -344,7 +356,7 @@ async function initBrowser(headless = true) {
 async function setup(browser) {
     console.log('设置模式，启动浏览器UI界面，用于记录登录信息。');
 
-    const LOGIN_URL = 'https://passport.csdn.net/login';
+    const LOGIN_URL = `https://passport.csdn.net/login${SPM_PARAM_START}`;
 
     try {
         await deleteFolderRecursive(USER_DATA_DIR);
@@ -379,7 +391,7 @@ async function setup(browser) {
  * @param {import('puppeteer').Browser} browser - 浏览器对象
  */
 async function login(browser) {
-    const LOGIN_URL = 'https://passport.csdn.net/login';
+    const LOGIN_URL = `https://passport.csdn.net/login${SPM_PARAM_START}`;
     let page = await createNewPage(browser);
 
     // 打开CSDN登录页面，等待可能的登陆后跳转
@@ -504,10 +516,10 @@ async function getArticleInfoArray(browser, userId) {
 async function _getArticleInfoArray(browser, userId, filterType) {
     console.log('获取文章ID列表。');
 
-    const TARGET_URL = 'https://blog.csdn.net/community/home-api/v1/get-business-list';
-    const ARTICLES_PAGE_URL = `https://blog.csdn.net/${userId}?type=blog`;
-    const PRIVATE_ARTICLES_PAGE_URL = `https://blog.csdn.net/${userId}?type=blog&filterType=private`;
-    const AUDIT_ARTICLES_PAGE_URL = `https://blog.csdn.net/${userId}?type=blog&filterType=audit`;
+    const TARGET_URL = `https://blog.csdn.net/community/home-api/v1/get-business-list`;
+    const ARTICLES_PAGE_URL = `https://blog.csdn.net/${userId}?type=blog${SPM_PARAM_END}`;
+    const PRIVATE_ARTICLES_PAGE_URL = `https://blog.csdn.net/${userId}?type=blog&filterType=private${SPM_PARAM_END}`;
+    const AUDIT_ARTICLES_PAGE_URL = `https://blog.csdn.net/${userId}?type=blog&filterType=audit${SPM_PARAM_END}`;
     let page = await createNewPage(browser);
 
     let articles_page_url = ARTICLES_PAGE_URL;
@@ -536,8 +548,8 @@ async function _getArticleInfoArray(browser, userId, filterType) {
                             if (!articleInfos.some(info => info.articleId === article.articleId)) {
                                 articleInfos.push({
                                     articleId: article.articleId,
-                                    url: article.url,
-                                    editUrl: article.editUrl,
+                                    url: appendSpmParam(article.url),
+                                    editUrl: appendSpmParam(article.editUrl),
                                     lastTime: article.postTime
                                 });
                             }

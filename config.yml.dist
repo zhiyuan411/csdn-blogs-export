@@ -30,6 +30,7 @@ general:
   replacements:                # 文章内容的字符串替换规则
     - source: 'https://i-blog.csdnimg.cn'
       target: 'https://csdnimg.your-domain'
+  spm: ''                      # 设置有效的spm参数可以降低验证真人的滑块的概率
 
 # 需要强制导出/备份的文章ID配置
 article_ids:
