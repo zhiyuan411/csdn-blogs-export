@@ -914,9 +914,8 @@ async function downloadArticles(articleInfos, continueDownload = false) {
                     continue;
                 }
 
-                // 保存内容到文件
-                const sanitizedTitle = title.replace(/\//g, '%2F'); // 转义Linux下的非法字符
-                // sanitizedTitle = title.replace(/[\\/*?:"<>|]/g, '-'); // 替换Windows下的非法字符
+                // 保存内容到文件：过滤所有非法字符（< > : " / \ | ? *），统一替换为短横线-
+                const sanitizedTitle = title.replace(/[<>:"/\\|?*]/g, '-');
                 const targetDir = article.subject && article.subject in DOWNLOAD_PATHS
                     ? DOWNLOAD_PATHS[article.subject]
                     : DEFAULT_DOWNLOAD_PATH;
