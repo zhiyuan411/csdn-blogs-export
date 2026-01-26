@@ -12,6 +12,10 @@ directories:
 
 # 通用配置
 general:
+  # 启用快速模式后可以通过最近文章列表快速地获取满足日期要求的文章
+  # 优点：获取的文章数量小，整体处理速度快很多倍，稳定性好，防CSDN屏蔽性高
+  # 缺点：只能获取到公开文章，对于私有文章、审核中/审核失败的文章无法备份
+  quick_mode: false             # 是否启用快速模式
   cookie_file: './cookie.txt'  # 存储登录Cookie的文件路径
   process_log: true            # 是否打印详细的处理过程日志
   action_interval_time: 2000   # 操作间隔时间（毫秒），设置过短易被CSDN屏蔽
