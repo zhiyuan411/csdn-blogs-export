@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>请进行安全验证(Security Verification)</title>
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+
+            .primary-color {
+                color: #0176e8;
+            }
+
+            .notice-color {
+                color: #666;
+                margin-top: 10px;
+            }
+
+            main.container {
+                position: relative;
+                display: flex;
+                justify-content: center;
+                height: 100vh;
+                min-height: 600px;
+                text-align: center;
+                padding: 50px 16px 0;
+            }
+
+            main.container img.bg {
+                position: absolute;
+                top: 0;
+                z-index: -1;
+                width: 100%;
+                max-width: 764px;
+            }
+
+            main.container .text-wrap {
+                margin-top: 10%;
+            }
+
+            main.container .text-wrap .text:first-child {
+                margin-bottom: 10px;
+            }
+
+            .pc {
+                display: block;
+            }
+
+            .mobile {
+                display: none;
+            }
+
+            @media screen and (max-width: 768px) {
+                .pc {
+                    display: none;
+                }
+
+                .mobile {
+                    display: block;
+                    margin: 0 !important;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <main class="container">
+            <img class="bg" src="data:image/jpeg;base64,/9j...Z" alt=""/>
+            <div class="text-wrap pc">
+                <div class="text">
+                    很抱歉，您访问的网站已开启安全防御，请完成<strong class="primary-color">“安全验证”</strong>
+                    后继续访问
+      
+                </div>
+                <div class="text">
+                    Sorry, the website you visited has security defense enabled. Please complete the
+        <strong class="primary-color">"Security Verification"</strong>
+                    before continuing to visit
+      
+                </div>
+                <div class="text notice-color">验证异常? 请尝试: 1.更换浏览器重试 2.更换网络热点重试 3.关闭浏览器相关插件
+      </div>
+            </div>
+            <div class="text-wrap mobile">
+                <div class="text">
+                    <div>很抱歉，您访问的网站已开启安全防御</div>
+                    <div>
+                        请完成<strong class="primary-color">“安全验证”</strong>
+                        后继续访问
+        
+                    </div>
+                </div>
+                <div class="text">
+                    <div>Sorry, the website you visited has security defense enabled.</div>
+                    <div>
+                        Please complete the
+          <strong class="primary-color">"Security Verification"</strong>
+                    </div>
+                    before continuing to visit
+      
+                </div>
+                <div class="text notice-color">验证异常? 请尝试: 1.更换浏览器重试 2.更换网络热点重试
+      </div>
+            </div>
+        </main>
+        <script charset="utf-8" type="text/javascript" src="/cdn_cgi_bs_captcha/static/js/init_waf.js"></script>
+    </body>
+</html>
+

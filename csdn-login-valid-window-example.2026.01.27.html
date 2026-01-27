@@ -1,0 +1,66 @@
+<div class="layui-layer layui-layer-page" id="layui-layer1" type="page" times="1" showtime="0" contype="string" style="z-index: 19891015; position: fixed; top: 159.5px; left: 388px;"><div class="layui-layer-content">
+
+
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no">
+<title>click_v2</title>
+
+
+
+<div class="caption-wrap">
+	<div class="caption">
+		<div class="caption__title" id="title">请完成安全验证</div>
+		<div class="caption__core" id="click_v2" style="position: relative;"><div class="verify-img-out" style="position: relative; height: 165px;"><div class="verify-img-panel" style="width: 260px; height: 160px; background-size: 260px 160px; margin-bottom: 5px; cursor: pointer;"><div class="verify-refresh" style="z-index:3"><i class="iconfont icon-refresh"></i></div><canvas width="260px" height="160px"></canvas></div></div><div class="verify-bar-area" style="width: 260px; height: 40px; line-height: 40px;"><div class="target-image" style="width: 260px; height: 40px; background: url(&quot;/cdn_cgi_bs_captcha/static/images/points/82bcd602-7ef0-4832-ae3e-23df03769c73-tg.png&quot;);"></div> </div></div>
+	</div>
+</div>
+
+<script type="text/javascript">
+	var language = window.navigator.language || window.navigator.browserLanguage;
+
+	if (!isChinese(language)) {
+		var title = document.getElementById("title")
+		title.textContent = 'Please complete verification';
+	}
+	
+$('#click_v2').pointsVerify({
+	mode: 'fixed',
+	ready : function() {
+	},
+	success : function() {
+		var language = window.navigator.language || window.navigator.browserLanguage;
+		if (!isChinese(language)) {
+			layer.msg('Congratulations', {shade: 0.3,time: 600});
+			layer.closeAll('page');
+			if(window.isreload==true){
+				setTimeout("window.location.reload();",800);
+			}
+		} else {
+			layer.msg('恭喜，验证成功', {shade: 0.3,time: 600});
+			layer.closeAll('page');
+			if(window.isreload==true){
+				setTimeout("window.location.reload();",800);
+			}
+		}
+	},
+	retry :function() {
+		var language = window.navigator.language || window.navigator.browserLanguage;
+		if (!isChinese(language)) {
+			layer.msg('Retry', {shade: 0.3, time: 600});
+		} else {
+			layer.msg('需要重新验证', {shade: 0.3, time: 600});
+		}
+	},
+	error : function() {
+		var language = window.navigator.language || window.navigator.browserLanguage;
+		if (!isChinese(language)) {
+			layer.msg('Retry', {shade: 0.3, time: 600});
+		} else {
+			layer.msg('需要重新验证', {shade: 0.3, time: 600});
+		}
+	}
+
+});
+	
+</script>
+
+</div><div class="layui-layer-setwin"></div></div>

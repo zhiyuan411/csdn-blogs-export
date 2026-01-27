@@ -1,0 +1,171 @@
+---- 最近文章和分类文章列表的数据接口差异仅在参数值：
+https://blog.csdn.net/community/home-api/v1/get-business-list?page=2&size=20&businessType=lately&noMore=false&username=zhiyuan411
+https://blog.csdn.net/community/home-api/v1/get-business-list?page=1&size=20&businessType=blog&orderby=&noMore=false&year=&month=&username=zhiyuan411
+
+其他：
+1）size固定为20，修改无效
+
+
+---- 最近文章的返回样例：
+{
+    "code": 200,
+    "message": "success",
+    "traceId": "19824bb8-4bfb-4f34-9f1c-015e852c6be7",
+    "data":
+    {
+        "list":
+        [
+            {
+                "type": "download",
+                "formatTime": "2025.10.15",
+                "title": "Docker.dmg的macOS 13.x.x可用版本",
+                "description": "Docker.dmg的macOS 13.x.x可用版本",
+                "fileType": "dmg",
+                "createTime": 1760512864000,
+                "url": "https://download.csdn.net/download/zhiyuan411/92136394",
+                "rtype": "file"
+            },
+            {
+                "type": "blog",
+                "formatTime": "2025.10.11",
+                "title": "阿里云盘：一个屠龙者终成恶龙的故事",
+                "description": "阿里云盘从&quot;不限速&quot;承诺到&quot;动态限速&quot;的转变，揭示了云存储行业&quot;先免费后收割&quot;的商业模式。2020年凭借&quot;不限速&quot;口号迅 速崛起，但随后逐步通过限速、容量缩水、自动续费陷阱等手段逼迫用户付费，最终复刻了百度网盘的盈利路径。目前用户面临下载断流、速度骤降等问题，建议采取多平台备份（如NAS搭建）、及时转移重要数据等自保措施。曾经的&quot;屠龙者&quot;如今已成&quot;恶龙&quot;，凸显云存储行业普遍存在的承诺失信问题",
+                "hasOriginal": true,
+                "diggCount": 9,
+                "commentCount": 1,
+                "postTime": 1760188553000,
+                "createTime": 1759656310000,
+                "updateTime": 1760188697000,
+                "url": "https://blog.csdn.net/zhiyuan411/article/details/152559155",
+                "articleType": 1,
+                "viewCount": 1609,
+                "picList":
+                [],
+                "editUrl": "https://editor.csdn.net/md?articleId=152559155",
+                "collectCount": 10,
+                "rtype": "article"
+            },
+            ...
+        ],
+        "total": null
+    }
+}
+
+
+---- 分类文章的返回详情：
+{
+    "code": 200,
+    "message": "success",
+    "traceId": "228bddf2-cd06-4a50-83c2-fd65b887c444",
+    "data": {
+        "list": [
+            {
+                "articleId": 81351176,
+                "title": "Living",
+                "description": "First2.开心就好3.无拘无束（自由）4.Be Nice（但行好事）Others",
+                "url": "https://xiaobai.blog.csdn.net/article/details/81351176",
+                "type": 1,
+                "top": true,
+                "forcePlan": false,
+                "viewCount": 1297,
+                "commentCount": 2,
+                "editUrl": "https://editor.csdn.net/md?articleId=81351176",
+                "postTime": "2018-08-02 03:01:20",
+                "diggCount": 1,
+                "formatTime": "2018.08.02",
+                "picList": [],
+                "collectCount": 1,
+                "tags": [
+                    "living"
+                ],
+                "hasInsCode": false
+            },
+            {
+                "articleId": 157332870,
+                "title": "Ed25519简记",
+                "description": "Ed25519是一种基于Edwards曲线的数字签名算法，采用素数域p=2²⁵⁵-19实现高效模运算。其核心优势包括：确定性签名生成（无需随机数）、128位安全强度、抗侧信道攻击，以及固定长度的紧凑密钥（32字节公钥）和签名（64字节）。相比RSA-3072，Ed25519签名速度快137倍且密钥更短；相较于ECDSA，它消除了小群攻击风险并简化了实现。该算法特别适合高吞吐场景如区块链和API安全，已成为轻量级密码学的标杆方案。",
+                "url": "https://xiaobai.blog.csdn.net/article/details/157332870",
+                "type": 1,
+                "top": false,
+                "forcePlan": false,
+                "viewCount": 26,
+                "commentCount": 0,
+                "editUrl": "https://editor.csdn.net/md?articleId=157332870",
+                "postTime": "2026-01-25 16:02:56",
+                "diggCount": 0,
+                "formatTime": "前天 16:02",
+                "picList": [],
+                "collectCount": 0,
+                "tags": [
+                    "算法",
+                    "Ed25519",
+                    "25519",
+                    "Edwards",
+                    "椭圆曲线签名算法",
+                    "RSA",
+                    "椭圆曲线加密算法"
+                ],
+                "hasInsCode": false
+            },
+...
+        ],
+        "total": 777
+    }
+}
+
+
+---- 登录被拦截：
+请求网址
+https://passport.csdn.net/v1/register/pc/login/doLogin
+请求方法
+POST
+状态代码
+521
+远程地址
+220.185.184.16:443
+引荐来源网址政策
+unsafe-url
+
+
+---- 登录正常：
+请求网址
+https://passport.csdn.net/v1/register/pc/login/doLogin
+请求方法
+POST
+状态代码
+200 OK
+远程地址
+220.185.184.16:443
+引荐来源网址政策
+unsafe-url
+
+
+---- 完整流程：
+doLogin 521 xhr     16.9 kB 68 ms
+init_waf.js?v=1769484464195 200 script      74.6 kB 92 ms
+captcha.css?v=1769484464301 200 stylesheet      22.4 kB 75 ms
+layui.css?v=1769484464301   200 stylesheet      125 kB  157 ms
+LAB.js?v=1769484464301  200 script      5.7 kB  64 ms
+vendor.js?v=1769484464301   200 script      278 kB  352 ms
+app.js?v=1769484464301  200 script      730 kB  530 ms
+layui.js?v=1769484464301    200 script      356 kB  437 ms
+yd_embedded_captcha_error_upload    200 xhr     0.1 kB  50 ms
+convert?callback=callback_1769484465334&fpv=H4sIAA…4sIAAAAAAAAAyspKk0FAI1M%2FP0EAAAA&_=1769484464853    200 xhr     1.2 kB  54 ms
+data:application/x-…    200 font    passport.csdn.net/cdn_cgi_bs_captcha/static/css/captcha.css?v=1769484464301 1.7 kB  28 ms
+convert?callback=callback_1769484465475&captcha_pr…rmpr%2Bu6kUUlv38A092T%2FRQBAAA%3D&_=1769484464854    200 xhr     0.4 kB  73 ms
+图片data:image/png;base…  200 png passport.csdn.net/cdn_cgi_bs_captcha/static/js/app.js?v=1769484464301:1 （内存缓存）  0 ms
+图片0544732c-44be-4f20-b935-1ae96ffaecaa-bg.jpg   200 jpeg    passport.csdn.net/cdn_cgi_bs_captcha/static/js/app.js?v=1769484464301:1 15.2 kB 95 ms
+图片0544732c-44be-4f20-b935-1ae96ffaecaa-tg.png   200 png 其他  4.9 kB  73 ms
+图片data:image/png;base…  200 png passport.csdn.net/cdn_cgi_bs_captcha/static/css/captcha.css?v=1769484464301 （内存缓存）  0 ms
+verify?callback=callback_1769484511472  200 xhr     0.3 kB  112 ms
+doLogin 200 xhr     2.1 kB  376 ms
+www.csdn.net    200 document        122 kB  880 ms
+
+
+
+
+
+
+
+
+
