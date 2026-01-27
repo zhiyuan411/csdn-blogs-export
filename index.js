@@ -151,6 +151,26 @@ let browser = await initBrowser(runMode === 'run' || runMode === 'single');
 ////// 入口主流程 结束 ///////
 
 /**
+ * 在异常或关键节点时输出调试快照（仅当 PROCESS_LOG 启用时生效）
+ * 用于问题定位，后续可扩展（如截图、控制台日志等）
+ * @param {import('puppeteer').Page} page - 当前页面对象
+ * @param {string} [context=''] - 上下文描述（如 "登录失败"），可选
+ */
+async function debugSnapshot(page, context = '') {
+    if (!PROCESS_LOG) return;
+
+    try {
+        const url = page.url();
+        const html = await page.content();
+        console.log(`\n[DEBUG SNAPSHOT] ${context}`);
+        console.log(`URL:  ${url}`);
+        console.log(`HTML:\n ${html}\n`);
+    } catch (err) {
+        console.error(`[DEBUG SNAPSHOT] ${context} 获取快照失败:`, err.message);
+    }
+}
+
+/**
  * 删除文件夹及其内容
  * @param {string} dirPath - 要删除的文件夹路径
  */
@@ -358,6 +378,42 @@ async function setup(browser) {
 }
 
 /**
+ * 工具函数：判断页面是否处于已登录状态（基于特征点数组循环检测）
+ * @param {import('puppeteer').Page} page - Puppeteer页面对象
+ * @returns {Promise<boolean>} true=已登录，false=未登录
+ */
+async function isLoggedIn(page) {
+    try {
+        // 未登录特征点数组（核心判断依据，每个特征点附带原理说明）
+        const notLoggedInFeatures = [
+            {
+                selector: 'div.passport-container',
+                description: '登录页专属根容器：仅登录页存在该容器，存在则说明停留在登录页，未登录'
+            },
+            {
+                selector: '.csdn-toolbar-loginbtn',
+                description: '全局登录按钮：任意页面出现该按钮，说明账号处于未登录的全局状态'
+            }
+        ];
+
+        // 循环检测所有未登录特征点
+        for (const feature of notLoggedInFeatures) {
+            const element = await page.$(feature.selector);
+            if (element) {
+                console.log(`检测到未登录特征【${feature.selector}】：${feature.description}，判定为未登录`);
+                return false;
+            }
+        }
+
+        console.log('未检测到任何未登录特征，判定为已登录');
+        return true;
+    } catch (error) {
+        console.warn('登录状态判断出错，默认判定为未登录：', error.message);
+        return false;
+    }
+}
+
+/**
  * 模拟登录模式，启动浏览器UI界面，使用用户名、密码进行模拟登录CSDN操作。
  * @param {import('puppeteer').Browser} browser - 浏览器对象
  */
@@ -373,12 +429,7 @@ async function login(browser) {
     } catch (error) {
         try {
             console.error(`打开CSDN登录页面失败：${error.message}，再次重试。`);
-            // 过程日志
-            if (PROCESS_LOG) {
-                const html = await page.content(); // 获取当前 HTML
-                console.log('当前 HTML 内容:\n', html);
-            }
-            page.close()
+            await page.close()
             page = await createNewPage(browser);
             await page.goto(LOGIN_URL, {
                 timeout: PAGE_LOAD_TIMEOUT.LOAD,
@@ -387,30 +438,46 @@ async function login(browser) {
         } catch (error) {
             try {
                 console.error(`打开CSDN登录页面再次失败：${error.message}，再次重试。`);
-                page.close()
+                await page.close()
                 page = await createNewPage(browser);
                 await page.goto(LOGIN_URL, {
                     timeout: PAGE_LOAD_TIMEOUT.NETWORKIDLE2,
                     waitUntil: 'networkidle2'
                 });
             } catch (error) {
-                // 防止是页面已打开，只是加载判断失误情况，故强行继续后续步骤进行登录验证
-                console.error(`打开CSDN登录页面再次失败：${error.message}，不再重试。直接使用当前结果，尝试验证后续步骤！`);
+                // 防止是页面已打开，只是加载判断失误情况，先验证登录状态再继续
+                console.error(`打开CSDN登录页面再次失败：${error.message}，不再重试。先验证登录状态！`);
+                const loggedIn = await isLoggedIn(page);
+                if (loggedIn) {
+                    console.log('兜底验证：用户已登录，无需执行后续登录操作');
+                    await debugSnapshot(page);
+                    await page.close();
+                    return;
+                }
+                await debugSnapshot(page);
             }
         }
     }
     await sleep(LOGIN_REDIRECT_WAIT_TIME);
-    // 使用XPath来查找“密码登录”Tab
-    const passwordLoginTab = await page.$x('//span[text()="密码登录"]');
-    // 使用CSS选择器来查找login-third-passwd元素，并且确保它是span元素
-    const loginThirdPasswd = await page.$('span.login-third-passwd');
-    if (passwordLoginTab.length === 0 && !loginThirdPasswd) {
+
+    // 核心替换1：调用isLoggedIn判断初始登录状态
+    const loggedIn = await isLoggedIn(page);
+    if (loggedIn) {
         console.log('经验证，用户已登录');
+        await debugSnapshot(page);
         await page.close();
-        // 如果"密码登录"Tab和login-third-passwd元素都不存在，认为用户已登录，退出函数
         return;
     }
     console.log('用户未登录，尝试登录...');
+
+    // ========== 补回被遗漏的变量定义（关键修复点） ==========
+    // 使用XPath来查找“密码登录”Tab（定义passwordLoginTab变量）
+    const passwordLoginTab = await page.$x('//span[text()="密码登录"]');
+    // 使用CSS选择器来查找login-third-passwd元素（定义loginThirdPasswd变量）
+    const loginThirdPasswd = await page.$('span.login-third-passwd');
+    // =======================================================
+
+    // 原有登录操作逻辑（现在变量已定义，不会报错）
     if (passwordLoginTab.length > 0) {
         await passwordLoginTab[0].click();
         console.log('点击了"密码登录"Tab');
@@ -449,13 +516,18 @@ async function login(browser) {
     } else {
         throw new Error('尝试登录失败：找不到“登录”按钮');
     }
+
     // 等待一段时间，确保页面加载完成
     await sleep(LOGIN_REDIRECT_WAIT_TIME);
-    // 再次检查“密码登录”Tab是否存在
-    const passwordLoginTabAfterLogin = await page.$x('//span[text()="密码登录"]');
-    if (passwordLoginTabAfterLogin.length > 0) {
-        throw new Error('尝试登录失败：模拟登录后，仍然可以看到“密码登录”Tab');
+
+    // 核心替换2：调用isLoggedIn判断登录后状态
+    const loggedInAfterLogin = await isLoggedIn(page);
+    if (!loggedInAfterLogin) {
+        await debugSnapshot(page);
+        throw new Error('尝试登录失败：模拟登录后，仍检测到未登录特征');
     }
+
+    await debugSnapshot(page);
     await page.close();
     console.log('登录成功！');
 }
@@ -571,6 +643,7 @@ async function getQuickModeArticleInfos(browser, userId, startDate) {
         if (noChangeCount >= MAX_NO_CHANGE_COUNT) {
             if (retryCount >= MAX_RETRY_COUNT) {
                 removeResponseListener?.();
+                await debugSnapshot(page);
                 throw new Error(`快速模式滑动翻页已重试${retryCount}次失败`);
             }
             retryCount++;
@@ -806,6 +879,7 @@ async function _getArticleInfoArray(browser, userId, filterType) {
         if (noChangeCount >= MAX_NO_CHANGE_COUNT) {
             if (retryCount >= MAX_RETRY_COUNT) {
                 removeResponseListener?.();
+                await debugSnapshot(page);
                 throw new Error(`模拟向下滑动已重试${retryCount}次仍然失败`);
             }
             retryCount++;
@@ -930,6 +1004,7 @@ async function filterArticlesByLastTime(dayOffset, articleInfos) {
                 console.error(`处理文章 ${article.articleId} 时发生错误: ${error.message}`);
                 if (retryCount >= MAX_RETRY_COUNT) {
                     // console.error(`文章 ${article.articleId} 在重试${retryCount}次后仍然失败，放弃处理。`);
+                    await debugSnapshot(page);
                     throw new Error(`文章 ${article.articleId} 在最大重试次数后仍然失败`);
                 }
                 retryCount++;
@@ -1095,6 +1170,7 @@ async function downloadArticles(articleInfos, continueDownload = false) {
                 console.error(`处理文章 ${article.articleId} 时发生错误：${error.message}`);
                 if (retryCount >= MAX_RETRY_COUNT) {
                     // console.error(`文章 ${article.articleId} 在重试${retryCount}次后仍然失败，放弃处理。`);
+                    await debugSnapshot(page);
                     throw new Error(`文章 ${article.articleId} 在最大重试次数后仍然失败`);
                 }
                 retryCount++;
