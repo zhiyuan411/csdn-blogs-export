@@ -303,7 +303,7 @@ async function saveNativeCookies(page) {
 
         // 步骤4：打印用户友好的说明日志
         console.log(`
-📚 Cookie文件说明：
+� Cookie文件说明：
 1. 原生Cookie文件 (${nativeCookieFile})：
    - 包含所有Cookie元信息（domain/path/httpOnly/secure/expires/sameSite等），**尤其包含标记为HttpOnly状态的核心登录Cookie**
    - 由脚本自动保存，无需手动操作，完整还原浏览器所有Cookie
@@ -331,9 +331,7 @@ async function saveNativeCookies(page) {
     }
 }
 
-// =====================================
-// 2. 修改：重构parseCookies函数
-// =====================================
+
 /**
  * 解析并导入Cookie（优先使用原生JSON文件，不存在则使用传统文本文件）
  * @param {import('puppeteer').Page} page - Puppeteer页面对象
@@ -354,12 +352,14 @@ async function parseCookies(page) {
         if (nativeCookieContent.trim()) {
             const nativeCookies = JSON.parse(nativeCookieContent);
             if (Array.isArray(nativeCookies) && nativeCookies.length > 0) {
+                // 如果强行覆盖有效期会导致登录失败，可能是有些关键项加了校验
                 // 预处理Cookie：复制原数组并修改有效期为COOKIE_EXPIRES，不修改原始文件内容
-                const processedCookies = nativeCookies.map(cookie => ({
-                    ...cookie, // 复制所有原有属性
-                    expires: COOKIE_EXPIRES // 覆盖有效期为指定常量
-                }));
-                
+                // const processedCookies = nativeCookies.map(cookie => ({
+                //     ...cookie, // 复制所有原有属性
+                //     expires: COOKIE_EXPIRES // 覆盖有效期为指定常量
+                // }));
+                const processedCookies = nativeCookies
+
                 // 先访问目标网站确保上下文存在
                 await page.goto(`https://www${COOKIE_DOMAIN}`, {
                     waitUntil: 'domcontentloaded'
@@ -367,7 +367,8 @@ async function parseCookies(page) {
                 // 导入预处理后的Cookie（有效期已修改）
                 await page.setCookie(...processedCookies);
                 importedCount = processedCookies.length;
-                console.log(`✅ 从原生Cookie文件(${nativeCookieFile})导入 ${importedCount} 个Cookie（已统一有效期为 ${COOKIE_EXPIRES}）`);
+                // console.log(`✅ 从原生Cookie文件(${nativeCookieFile})导入 ${importedCount} 个Cookie（已统一有效期为 ${COOKIE_EXPIRES}）`);
+                console.log(`✅ 从原生Cookie文件(${nativeCookieFile})导入 ${importedCount} 个Cookie`);
 
                 // 重命名原生Cookie文件为日期后缀备份（仅日期，无时间）
                 await renameCookieFile(nativeCookieFile);
@@ -375,7 +376,21 @@ async function parseCookies(page) {
             }
         }
     } catch (nativeErr) {
-        console.log(`原生Cookie文件(${nativeCookieFile})不存在或无效，尝试使用传统Cookie文件(${COOKIE_FILE})`);
+        // 细分原生Cookie文件的错误类型
+        if (nativeErr.code === 'ENOENT') {
+            // 文件不存在：保留原有友好提示
+            console.log(`原生Cookie文件(${nativeCookieFile})不存在，尝试使用传统Cookie文件(${COOKIE_FILE})`);
+        } else if (nativeErr.name === 'SyntaxError') {
+            // JSON解析错误：特殊提示
+            console.error(`❌ 原生Cookie文件(${nativeCookieFile})格式错误（JSON解析失败）：${nativeErr.message}`);
+        } else {
+            // 其他错误（权限、目录、文件损坏等）：打印详细错误信息
+            console.error(`❌ 处理原生Cookie文件(${nativeCookieFile})时发生异常：`);
+            console.error(`   错误码: ${nativeErr.code}`);
+            console.error(`   错误信息: ${nativeErr.message}`);
+            console.error(`   错误堆栈: ${nativeErr.stack}`);
+            console.log(`尝试使用传统Cookie文件(${COOKIE_FILE})`);
+        }
     }
 
     // 步骤2：原生文件不存在时，使用传统文本Cookie文件
@@ -434,7 +449,18 @@ async function parseCookies(page) {
             console.log(`传统Cookie文件(${COOKIE_FILE})内容为空，跳过导入`);
         }
     } catch (traditionalErr) {
-        console.log(`传统Cookie文件(${COOKIE_FILE})不存在或无法访问，跳过Cookie导入`);
+        // 细分传统Cookie文件的错误类型
+        if (traditionalErr.code === 'ENOENT') {
+            // 文件不存在：保留原有友好提示
+            console.log(`传统Cookie文件(${COOKIE_FILE})不存在，跳过Cookie导入`);
+        } else {
+            // 其他错误（权限不足、文件是目录、读取失败等）：打印详细错误信息
+            console.error(`❌ 处理传统Cookie文件(${COOKIE_FILE})时发生异常：`);
+            console.error(`   错误码: ${traditionalErr.code}`);
+            console.error(`   错误信息: ${traditionalErr.message}`);
+            console.error(`   错误堆栈: ${traditionalErr.stack}`);
+            console.log(`跳过Cookie导入`);
+        }
     }
 
     return importedCount;
@@ -481,7 +507,7 @@ async function initBrowser(headless = true) {
     try {
         // 根据传入的参数决定是否开启无头模式
         const headlessOption = headless ? "new" : false;
-        
+
         // 启动浏览器
         browser = await puppeteer.launch({
             headless: headlessOption,
@@ -520,7 +546,7 @@ async function initBrowser(headless = true) {
 async function setup(browser) {
     console.log('设置模式，启动浏览器UI界面，用于记录登录信息。');
     const LOGIN_URL = `https://passport.csdn.net/login${SPM_PARAM_START}`;
-    
+
     try {
         await deleteFolderRecursive(USER_DATA_DIR);
         console.log(`userData 目录 ${USER_DATA_DIR} 已删除`);
@@ -531,7 +557,7 @@ async function setup(browser) {
     // 创建下载目录
     await fs.mkdir(DEFAULT_DOWNLOAD_PATH, { recursive: true });
     console.log(`下载目录 ${DEFAULT_DOWNLOAD_PATH} 已创建`);
-    
+
     // 遍历创建自定义下载目录
     for (const [subject, dirPath] of Object.entries(DOWNLOAD_PATHS)) {
         await fs.mkdir(dirPath, { recursive: true });
@@ -541,7 +567,7 @@ async function setup(browser) {
     // 初始化页面并打开登录页
     const page = await createNewPage(browser);
     await page.goto(LOGIN_URL);
-    
+
     // 等待用户登录
     await sleep(DEBUG_LOGIN_TIME);
 
