@@ -100,6 +100,8 @@ let browser = await initBrowser(runMode === 'run' || runMode === 'single');
         if (runMode === 'login') {
             // 仅完成登录，不再执行后续代码
             console.log('登录模式，仅完成登录操作，不再执行后续代码。')
+            // 等待一会儿后再关闭浏览器，用于进行登录
+            await sleep(DEBUG_LOGIN_TIME);
             await browser.close();
             process.exit(0);
         }
@@ -150,45 +152,8 @@ let browser = await initBrowser(runMode === 'run' || runMode === 'single');
 })();
 ////// 入口主流程 结束 ///////
 
-/**
- * 在异常或关键节点时输出调试快照（仅当 PROCESS_LOG 启用时生效）
- * 用于问题定位，后续可扩展（如截图、控制台日志等）
- * @param {import('puppeteer').Page} page - 当前页面对象
- * @param {string} [context=''] - 上下文描述（如 "登录失败"），可选
- */
-async function debugSnapshot(page, context = '') {
-    if (!PROCESS_LOG) return;
 
-    try {
-        const url = page.url();
-        const html = await page.content();
-        console.log(`\n[DEBUG SNAPSHOT] ${context}`);
-        console.log(`URL:  ${url}`);
-        console.log(`HTML:\n ${html}\n`);
-    } catch (err) {
-        console.error(`[DEBUG SNAPSHOT] ${context} 获取快照失败:`, err.message);
-    }
-}
 
-/**
- * 删除文件夹及其内容
- * @param {string} dirPath - 要删除的文件夹路径
- */
-async function deleteFolderRecursive(dirPath) {
-    if (await fs.stat(dirPath).catch(() => false)) {
-        const files = await fs.readdir(dirPath);
-        for (const file of files) {
-            const filePath = path.join(dirPath, file);
-            const stats = await fs.stat(filePath);
-            if (stats.isDirectory()) {
-                await deleteFolderRecursive(filePath);
-            } else {
-                await fs.unlink(filePath);
-            }
-        }
-        await fs.rmdir(dirPath);
-    }
-}
 
 /**
  * 获取命令行参数并校验
@@ -237,43 +202,274 @@ dayOffset 表示从今天0点往前多少天开始计算：
 }
 
 /**
- * 解析 Cookie 字符串为 Puppeteer 可用的格式
- * @param {string} cookieString - 原始 Cookie 字符串
- * @param {string} domain - Cookie 所属域名
- * @returns {Array} 解析后的 Cookie 数组
+ * 删除文件夹及其内容
+ * @param {string} dirPath - 要删除的文件夹路径
  */
-function parseCookies(cookieString, domain) {
-    return cookieString.split('; ').filter(part => part.trim() !== '').map(cookie => {
-        const [name, value] = cookie.split('=', 2);
-        if (!name || value === undefined) {
-            console.warn(`跳过无效 Cookie: ${cookie}`);
-            return null;
+async function deleteFolderRecursive(dirPath) {
+    if (await fs.stat(dirPath).catch(() => false)) {
+        const files = await fs.readdir(dirPath);
+        for (const file of files) {
+            const filePath = path.join(dirPath, file);
+            const stats = await fs.stat(filePath);
+            if (stats.isDirectory()) {
+                await deleteFolderRecursive(filePath);
+            } else {
+                await fs.unlink(filePath);
+            }
         }
-        // 移除值中的引号和末尾的换行符
-        let cleanValue = value.replace(/^"(.*)"$/, '$1').trim();
-        // 对 UserNick 进行 URL 解码
-        if (name === 'UserNick') {
-            cleanValue = decodeURIComponent(cleanValue);
-        }
-        // 设置默认属性
-        const cookieObj = {
-            name: name.trim(),
-            value: cleanValue,
-            domain: domain,
-            path: '/',
-            expires: COOKIE_EXPIRES, // 从配置中获取
-            httpOnly: false,
-            secure: false
-        };
-        // 为特定 Cookie 设置 httpOnly 和 secure 标志
-        if (PROTECTED_COOKIES.includes(name)) {
-            cookieObj.httpOnly = true;
-            cookieObj.secure = true;
-        }
-        return cookieObj;
-    }).filter(cookie => cookie !== null);
+        await fs.rmdir(dirPath);
+    }
 }
 
+/**
+ * 在异常或关键节点时输出调试快照（仅当 PROCESS_LOG 启用时生效）
+ * 用于问题定位，后续可扩展（如截图、控制台日志等）
+ * @param {import('puppeteer').Page} page - 当前页面对象
+ * @param {string} [context=''] - 上下文描述（如 "登录失败"），可选
+ */
+async function debugSnapshot(page, context = '') {
+    if (!PROCESS_LOG) return;
+
+    try {
+        const url = page.url();
+        const html = await page.content();
+        console.log(`\n[DEBUG SNAPSHOT] ${context}`);
+        console.log(`URL:  ${url}`);
+        console.log(`HTML:\n ${html}\n`);
+    } catch (err) {
+        console.error(`[DEBUG SNAPSHOT] ${context} 获取快照失败:`, err.message);
+    }
+}
+
+
+// =====================================
+// 1. 新增：保存原生Cookies文件的函数
+// =====================================
+/**
+ * 保存浏览器原生完整Cookies（JSON格式，含所有元信息）
+ * @param {import('puppeteer').Page} page - Puppeteer页面对象
+ */
+async function saveNativeCookies(page) {
+    try {
+        // 定义原生Cookie文件名（COOKIE_FILE + .native.json后缀）
+        const nativeCookieFile = `${COOKIE_FILE}.native.json`;
+        console.log(`\n开始保存原生完整Cookies到: ${nativeCookieFile}`);
+
+        // 获取所有 cookies（当前页面上下文可见的所有域）
+        const allCookies = await page.cookies(); // 不指定URL则获取所有域名的Cookie
+
+        // 无有效Cookie时跳过
+        if (!allCookies || allCookies.length === 0) {
+            console.log('未获取到任何原生Cookie，跳过保存');
+            return;
+        }
+
+        // 生成精确到秒的时间后缀（格式：YYYY-MM-DD-HH-mm-ss）
+        const now = new Date();
+        const timeSuffix = now.toISOString()
+            .replace(/T/g, '-')
+            .replace(/:/g, '-')
+            .replace(/\.\d+Z$/, '')
+            .replace(/\.\d+/, ''); // 移除毫秒，仅保留到秒
+
+        // 备份文件名：原生Cookie文件 + 精确到秒的时间后缀
+        const backupFile = `${nativeCookieFile}.${timeSuffix}`;
+
+        // 步骤1：删除同名备份文件（如果存在）
+        try {
+            await fs.access(backupFile);
+            await fs.unlink(backupFile);
+            console.log(`已删除同名备份文件: ${backupFile}`);
+        } catch (err) {
+            // 备份文件不存在，无需处理
+        }
+
+        // 步骤2：如果原生Cookie文件已存在，重命名为备份文件
+        try {
+            await fs.access(nativeCookieFile);
+            await fs.rename(nativeCookieFile, backupFile);
+            console.log(`已将原有原生Cookie文件备份为: ${backupFile}`);
+        } catch (err) {
+            // 原生Cookie文件不存在，无需备份
+        }
+
+        // 步骤3：保存完整Cookie为JSON格式（格式化，便于阅读）
+        await fs.writeFile(
+            nativeCookieFile,
+            JSON.stringify(allCookies, null, 2),
+            'utf8'
+        );
+        console.log(`✅ 原生完整Cookies已成功保存到: ${nativeCookieFile}`);
+
+        // 步骤4：打印用户友好的说明日志
+        console.log(`
+📚 Cookie文件说明：
+1. 原生Cookie文件 (${nativeCookieFile})：
+   - 包含所有Cookie元信息（domain/path/httpOnly/secure/expires/sameSite等），**尤其包含标记为HttpOnly状态的核心登录Cookie**
+   - 由脚本自动保存，无需手动操作，完整还原浏览器所有Cookie
+   - 导入时无需补充任何属性，直接生效，可100%还原登录态
+
+2. 传统Cookie文件 (${COOKIE_FILE})：
+   - 手动获取及补充完整方法：
+     a. 打开Chrome浏览器访问CSDN并完成登录
+     b. F12打开开发者工具 → 切换到Console（控制台）面板
+     c. 输入 document.cookie 并回车，右键复制输出的完整字符串
+     d. 将复制的字符串粘贴到 ${COOKIE_FILE} 文件中（基础内容）
+     e. 补充HttpOnly核心登录Cookie（关键步骤，缺失则无法登录）：
+        ① F12 → Application（应用）→ Storage（存储）→ Cookies → 选择.csdn.net/blog.csdn.net等相关域名
+        ② 找到列表中「HttpOnly」列打√的Cookie（点击列名可以按照HttpOnly排序），复制其name=value键值对
+        ③ 将这些键值对手动拼接到 ${COOKIE_FILE} 文件的字符串末尾（格式：原有内容; 新Cookie=值; 新Cookie2=值2）
+   - 必须补充的核心HttpOnly登录Cookie（示例）：
+     ✅ SESSION（.csdn.net/msg.csdn.net）：（可选）CSDN根域名核心会话标识，服务器判定登录的核心依据
+     ✅ UserInfo（.csdn.net）：加密存储的用户身份信息，验证用户合法性
+     ✅ UserToken（.csdn.net）：用户权限令牌，访问个人/敏感接口必需
+     ✅ https_waf_cookie（blog.csdn.net）：CSDN WAF防护验证Cookie，防止请求被拦截
+     ✅ waf_captcha_marker（blog.csdn.net）：人机验证标记，部分接口调用必需
+`);
+    } catch (error) {
+        console.error(`❌ 保存原生Cookies失败: ${error.message}`);
+    }
+}
+
+// =====================================
+// 2. 修改：重构parseCookies函数
+// =====================================
+/**
+ * 解析并导入Cookie（优先使用原生JSON文件，不存在则使用传统文本文件）
+ * @param {import('puppeteer').Page} page - Puppeteer页面对象
+ * @returns {Promise<number>} 成功导入的Cookie数量
+ */
+async function parseCookies(page) {
+    // 迁移COOKIE_DOMAIN到函数内部
+    const COOKIE_DOMAIN = '.csdn.net';
+    let importedCount = 0;
+
+    // 定义原生Cookie文件名
+    const nativeCookieFile = `${COOKIE_FILE}.native.json`;
+
+    try {
+        // 步骤1：优先检查并使用原生Cookie文件
+        await fs.access(nativeCookieFile);
+        const nativeCookieContent = await fs.readFile(nativeCookieFile, 'utf8');
+        if (nativeCookieContent.trim()) {
+            const nativeCookies = JSON.parse(nativeCookieContent);
+            if (Array.isArray(nativeCookies) && nativeCookies.length > 0) {
+                // 预处理Cookie：复制原数组并修改有效期为COOKIE_EXPIRES，不修改原始文件内容
+                const processedCookies = nativeCookies.map(cookie => ({
+                    ...cookie, // 复制所有原有属性
+                    expires: COOKIE_EXPIRES // 覆盖有效期为指定常量
+                }));
+                
+                // 先访问目标网站确保上下文存在
+                await page.goto(`https://www${COOKIE_DOMAIN}`, {
+                    waitUntil: 'domcontentloaded'
+                });
+                // 导入预处理后的Cookie（有效期已修改）
+                await page.setCookie(...processedCookies);
+                importedCount = processedCookies.length;
+                console.log(`✅ 从原生Cookie文件(${nativeCookieFile})导入 ${importedCount} 个Cookie（已统一有效期为 ${COOKIE_EXPIRES}）`);
+
+                // 重命名原生Cookie文件为日期后缀备份（仅日期，无时间）
+                await renameCookieFile(nativeCookieFile);
+                return importedCount;
+            }
+        }
+    } catch (nativeErr) {
+        console.log(`原生Cookie文件(${nativeCookieFile})不存在或无效，尝试使用传统Cookie文件(${COOKIE_FILE})`);
+    }
+
+    // 步骤2：原生文件不存在时，使用传统文本Cookie文件
+    try {
+        await fs.access(COOKIE_FILE);
+        const cookieString = await fs.readFile(COOKIE_FILE, 'utf8');
+        if (cookieString.trim()) {
+            // 先访问目标网站确保上下文存在
+            await page.goto(`https://www${COOKIE_DOMAIN}`, {
+                waitUntil: 'domcontentloaded'
+            });
+
+            // 传统解析逻辑（保留原有逻辑）
+            const cookies = cookieString.split('; ')
+                .filter(part => part.trim() !== '')
+                .map(cookie => {
+                    const [name, value] = cookie.split('=', 2);
+                    if (!name || value === undefined) {
+                        console.warn(`跳过无效Cookie: ${cookie}`);
+                        return null;
+                    }
+                    // 移除值中的引号和末尾的换行符
+                    let cleanValue = value.replace(/^"(.*)"$/, '$1').trim();
+                    // 对 UserNick 进行 URL 解码
+                    if (name === 'UserNick') {
+                        cleanValue = decodeURIComponent(cleanValue);
+                    }
+                    // 设置默认属性
+                    const cookieObj = {
+                        name: name.trim(),
+                        value: cleanValue,
+                        domain: COOKIE_DOMAIN,
+                        path: '/',
+                        expires: COOKIE_EXPIRES,
+                        httpOnly: false,
+                        secure: false
+                    };
+                    // 为特定Cookie设置httpOnly和secure标志
+                    if (PROTECTED_COOKIES.includes(name)) {
+                        cookieObj.httpOnly = true;
+                        cookieObj.secure = true;
+                    }
+                    return cookieObj;
+                })
+                .filter(cookie => cookie !== null);
+
+            if (cookies.length > 0) {
+                await page.setCookie(...cookies);
+                importedCount = cookies.length;
+                console.log(`✅ 从传统Cookie文件(${COOKIE_FILE})导入 ${importedCount} 个Cookie`);
+
+                // 重命名传统Cookie文件为日期后缀备份（仅日期，无时间）
+                await renameCookieFile(COOKIE_FILE);
+            }
+        } else {
+            console.log(`传统Cookie文件(${COOKIE_FILE})内容为空，跳过导入`);
+        }
+    } catch (traditionalErr) {
+        console.log(`传统Cookie文件(${COOKIE_FILE})不存在或无法访问，跳过Cookie导入`);
+    }
+
+    return importedCount;
+}
+
+/**
+ * 辅助函数：将Cookie文件重命名为日期后缀备份（先删除同名备份）
+ * @param {string} filePath - 要重命名的文件路径
+ */
+async function renameCookieFile(filePath) {
+    try {
+        // 生成仅日期的后缀（YYYY-MM-DD）
+        const dateSuffix = new Date().toISOString().split('T')[0];
+        const newFilePath = `${filePath}.${dateSuffix}`;
+
+        // 先删除同名备份文件（如果存在）
+        try {
+            await fs.access(newFilePath);
+            await fs.unlink(newFilePath);
+            console.log(`已删除同名日期备份文件: ${newFilePath}`);
+        } catch (err) {
+            // 备份文件不存在，无需处理
+        }
+
+        // 重命名原文件
+        await fs.rename(filePath, newFilePath);
+        console.log(`已将Cookie文件重命名为: ${newFilePath}`);
+    } catch (renameError) {
+        console.error(`重命名Cookie文件失败: ${renameError.message}`);
+    }
+}
+
+// =====================================
+// 3. 修改：重构initBrowser函数
+// =====================================
 /**
  * 初始化浏览器
  * @param {boolean} [headless=true] - 是否开启无头模式
@@ -283,56 +479,27 @@ async function initBrowser(headless = true) {
     console.log('初始化浏览器。');
     let browser;
     try {
-        // 根据传入的参数决定是否开启无头模式，并且如果是无头模式则使用新的Headless实现
+        // 根据传入的参数决定是否开启无头模式
         const headlessOption = headless ? "new" : false;
-        // userDataDir 表示把登录信息放到当前目录下，省着我们每次调用脚本都需要登录
+        
+        // 启动浏览器
         browser = await puppeteer.launch({
-            headless: headlessOption, // 根据传入的参数决定是否开启无头模式
+            headless: headlessOption,
             userDataDir: USER_DATA_DIR,
-            // ignoreHTTPSErrors: true, // 忽略 HTTPS 错误
-            args: BROWSER_ARGS // 从配置中获取浏览器启动参数
+            args: BROWSER_ARGS
         });
-        // 检查本地是否存在 Cookie 文件
-        try {
-            await fs.access(COOKIE_FILE);
-            // 读取 Cookie 文件内容
-            const cookieString = await fs.readFile(COOKIE_FILE, 'utf8');
-            if (cookieString.trim()) {
-                // 设置 Cookie 使用的目标网站域名
-                const COOKIE_DOMAIN = '.csdn.net';
-                // 创建临时页面用于设置 Cookie
-                const tempPage = await browser.newPage();
-                // 先访问一次目标网站，确保上下文存在
-                await tempPage.goto(`https://www${COOKIE_DOMAIN}`, {
-                    waitUntil: 'domcontentloaded'
-                });
-                // 解析并设置 Cookie
-                const cookies = parseCookies(cookieString, COOKIE_DOMAIN);
-                // console.log(cookies);
-                await tempPage.setCookie(...cookies);
-                console.log(`已从 ${COOKIE_FILE} 读取并设置 ${cookies.length} 个 Cookie`);
-                // 关闭临时页面
-                await tempPage.close();
-                // 重命名 Cookie 文件
-                try {
-                    // 获取当前日期作为后缀
-                    const today = new Date();
-                    const dateSuffix = today.toISOString().split('T')[0]; // 格式: YYYY-MM-DD
-                    // 生成新文件名: 原文件名.日期后缀
-                    const newCookieFile = `${COOKIE_FILE}.${dateSuffix}`;
-                    // 重命名文件
-                    await fs.rename(COOKIE_FILE, newCookieFile);
-                    console.log(`已将 Cookie 文件重命名为: ${newCookieFile}`);
-                } catch (renameError) {
-                    console.error('重命名 Cookie 文件失败:', renameError);
-                }
-            } else {
-                console.log(`${COOKIE_FILE} 文件为空，跳过设置 Cookie`);
-            }
-        } catch (err) {
-            // console.error(`访问 Cookie 文件失败:`, err);
-            // console.log(`${COOKIE_FILE} 文件不存在或无法访问，跳过设置 Cookie`);
+
+        // 创建临时页面用于导入Cookie
+        const tempPage = await browser.newPage();
+        // 调用重构后的parseCookies函数导入Cookie
+        const cookieCount = await parseCookies(tempPage);
+        // 关闭临时页面
+        await tempPage.close();
+
+        if (cookieCount === 0) {
+            console.log('未导入任何Cookie');
         }
+
         return browser;
     } catch (e) {
         console.error("初始化浏览器失败，直接退出。", e);
@@ -343,6 +510,9 @@ async function initBrowser(headless = true) {
     }
 }
 
+// =====================================
+// 4. 修改：重构setup函数（调用保存原生Cookie函数）
+// =====================================
 /**
  * 设置模式，启动浏览器UI界面，用于记录登录信息。
  * @param {import('puppeteer').Browser} browser - 浏览器对象
@@ -350,30 +520,35 @@ async function initBrowser(headless = true) {
 async function setup(browser) {
     console.log('设置模式，启动浏览器UI界面，用于记录登录信息。');
     const LOGIN_URL = `https://passport.csdn.net/login${SPM_PARAM_START}`;
+    
     try {
         await deleteFolderRecursive(USER_DATA_DIR);
         console.log(`userData 目录 ${USER_DATA_DIR} 已删除`);
     } catch (err) {
         console.log(`userData 目录 ${USER_DATA_DIR} 目录不存在，无需删除`);
     }
-    // 创建下载目录，如果不存在则创建
-    await fs.mkdir(DEFAULT_DOWNLOAD_PATH, {
-        recursive: true
-    });
+
+    // 创建下载目录
+    await fs.mkdir(DEFAULT_DOWNLOAD_PATH, { recursive: true });
     console.log(`下载目录 ${DEFAULT_DOWNLOAD_PATH} 已创建`);
-    // 遍历 DOWNLOAD_PATHS 并创建所有指定的下载目录
+    
+    // 遍历创建自定义下载目录
     for (const [subject, dirPath] of Object.entries(DOWNLOAD_PATHS)) {
-        await fs.mkdir(dirPath, {
-            recursive: true
-        });
+        await fs.mkdir(dirPath, { recursive: true });
         console.log(`下载目录 ${dirPath} (${subject}) 已创建`);
     }
-    // 初始化浏览器，关闭无头模式
+
+    // 初始化页面并打开登录页
     const page = await createNewPage(browser);
-    // 打开CSDN登录页面
     await page.goto(LOGIN_URL);
-    // 等待2分钟后再关闭浏览器，用于进行登录
+    
+    // 等待用户登录
     await sleep(DEBUG_LOGIN_TIME);
+
+    // 关键修改：在关闭page前调用保存原生Cookie函数
+    await saveNativeCookies(page);
+
+    // 关闭页面
     await page.close();
 }
 
@@ -446,14 +621,7 @@ async function login(browser) {
                 });
             } catch (error) {
                 // 防止是页面已打开，只是加载判断失误情况，先验证登录状态再继续
-                console.error(`打开CSDN登录页面再次失败：${error.message}，不再重试。先验证登录状态！`);
-                const loggedIn = await isLoggedIn(page);
-                if (loggedIn) {
-                    console.log('兜底验证：用户已登录，无需执行后续登录操作');
-                    await debugSnapshot(page);
-                    await page.close();
-                    return;
-                }
+                console.error(`打开CSDN登录页面再次失败：${error.message}，不再重试。继续后面的验证登录状态等流程。`);
                 await debugSnapshot(page);
             }
         }
@@ -464,7 +632,6 @@ async function login(browser) {
     const loggedIn = await isLoggedIn(page);
     if (loggedIn) {
         console.log('经验证，用户已登录');
-        await debugSnapshot(page);
         await page.close();
         return;
     }
@@ -527,7 +694,6 @@ async function login(browser) {
         throw new Error('尝试登录失败：模拟登录后，仍检测到未登录特征');
     }
 
-    await debugSnapshot(page);
     await page.close();
     console.log('登录成功！');
 }
