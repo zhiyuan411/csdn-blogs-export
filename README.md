@@ -24,7 +24,7 @@ CSDN 博客导出工具是一个命令行自动化工具，用于将 CSDN 博客
 
 - 已安装 [Node.js](https://nodejs.org/) (推荐 v14 及以上版本)
 - 已安装 [npm](https://www.npmjs.com/) 或 [yarn](https://yarnpkg.com/)
-- Chromium浏览器（Puppeteer会自动安装）
+- Chromium浏览器（Puppeteer会自动安装，快捷安装命令：`npx puppeteer browsers install chrome@121.0.6167.85`）
 
 ### 安装步骤
 
@@ -41,6 +41,16 @@ npm install
 # 复制配置文件模板
 cp config.yml.dist config.yml
 ```
+
+### 如果自行安装了不匹配版本的Chrome或需要使用本地正式版本的Chrome浏览器
+例如：使用 `npx puppeteer browsers install chrome@stable` 安装最新版本的测试浏览器等情况。
+
+在每次执行脚本前，都需要手动设置其路径，执行以下命令：
+```sh
+# 示例，改为真实的路径
+export PUPPETEER_EXECUTABLE_PATH="/Users/xxx/.cache/puppeteer/chrome/mac_arm-153.0.8010.36/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
+```
+
 
 ### 配置说明
 
