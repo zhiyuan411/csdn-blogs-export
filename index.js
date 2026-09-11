@@ -14,6 +14,8 @@ import {
     createArticleDataResponsePredicate,
     describeResponse
 } from './lib/article-api.js';
+// 文章主题（CSDN 分类专栏）提取：多策略兼容新旧详情页结构（含单元测试）
+import { extractArticleSubject } from './lib/article-subject.js';
 
 
 ////// 入口主流程 开始 ///////
@@ -1554,20 +1556,24 @@ async function filterArticlesByLastTime(dayOffset, articleInfos) {
                 // 将 timeValue 添加到 article 对象中
                 article.lastTime = timeValue;
                 if (timeDate > startDate) {
-                    // 获取主题：使用 queryXPath 执行 XPath 查询并获取匹配的元素列表，解构并获取第一个元素
-                    const [element] = await queryXPath(page, '//a[@class="tag-link" and @rel="noopener"]');
-                    let textContent = null;
-                    if (element) {
-                        // 如果找到匹配的元素，则提取其文本内容并去除首尾空格
-                        textContent = await element.evaluate(el => el.textContent.trim());
+                    // 获取主题（CSDN「分类专栏」，用于按主题分目录保存）
+                    // 2026-09 详情页改版后旧选择器（a.tag-link / span.tit）已失效，改为多策略依次尝试
+                    const subjectResult = await extractArticleSubject(page);
+                    article.subject = subjectResult.subject;
+                    if (subjectResult.subject) {
+                        // 过程日志：记录命中的策略，多专栏时一并列出其余候选，便于核对分目录结果
+                        const others = subjectResult.subjects.slice(1);
+                        logProcess(`[主题] 文章 ${article.articleId} 命中策略 "${subjectResult.strategy}"：` +
+                            `${subjectResult.subject}${others.length > 0 ? `（同页其它候选：${others.join('、')}）` : ''}`);
+                    } else if (subjectResult.rejected.length > 0) {
+                        // 选择器命中了内容但都不是有效主题：多为详情页再次改版，需要人工确认
+                        console.warn(`[主题] 文章 ${article.articleId} 未提取到有效主题（被过滤的候选：` +
+                            `${subjectResult.rejected.join(', ')}），将保存到默认目录`);
                     } else {
-                        // 备选方案：使用span[@class="tit"]定位并获取第一个元素的文本
-                        const [spanElement] = await queryXPath(page, '//span[@class="tit"]');
-                        if (spanElement) {
-                            textContent = await spanElement.evaluate(el => el.textContent.trim());
-                        }
+                        // 该文章未收录任何专栏：属正常情况，走默认目录
+                        logProcess(`[主题] 文章 ${article.articleId} 未收录专栏（已尝试 ${subjectResult.attempted.length} 种策略` +
+                            `${subjectResult.error ? `；采集异常：${subjectResult.error}` : ''}），将保存到默认目录`);
                     }
-                    article.subject = textContent;
                     filteredArticles.push(article);
                 }
                 // 如果成功，跳出重试循环
