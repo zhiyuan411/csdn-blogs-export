@@ -17,7 +17,10 @@ general:
   # 缺点：只能获取到公开文章，对于私有文章、审核中/审核失败的文章无法备份
   quick_mode: false             # 是否启用快速模式
   cookie_file: './cookie.txt'  # 存储登录Cookie的文件路径
-  process_log: true            # 是否打印详细的处理过程日志
+  # 是否打印详细的处理过程日志（定时任务无人值守时建议设为 false）
+  # false 时：循环内的逐条进度日志、响应诊断、失败样本日志（./logs 目录）均不再输出/落盘；
+  #           错误与警告（console.error）始终输出，不会静默失败
+  process_log: true
   action_interval_time: 2000   # 操作间隔时间（毫秒），设置过短易被CSDN屏蔽
   page_reuse_limit: 10         # 单个页面对象的最大复用次数，超过后会重新打开新页面
   viewport_width: 1080         # 模拟浏览器视窗宽度

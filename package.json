@@ -10,7 +10,8 @@
     "setup": "node index.js setup",
     "login": "node index.js login",
     "single": "node index.js single",
-    "all": "node index.js run"
+    "all": "node index.js run",
+    "test:unit": "node --test test/*.test.js"
   },
   "author": "cnfaq.cn",
   "type": "module",

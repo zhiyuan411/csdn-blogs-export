@@ -73,7 +73,7 @@ directories:
 # 通用配置
 general:
   cookie_file: './cookie.txt'     # Cookie存储文件路径
-  process_log: true               # 是否打印详细处理日志
+  process_log: true               # 是否打印详细处理日志（false时定时任务只保留错误输出）
   action_interval_time: 2000      # 操作间隔时间(毫秒)
   viewport_width: 1080            # 浏览器视窗宽度
   viewport_height: 600            # 浏览器视窗高度
@@ -101,7 +101,7 @@ article_ids:
 #### 通用配置
 
 - `cookie_file`: 存储登录 Cookie 的文件路径
-- `process_log`: 是否打印详细的处理过程日志
+- `process_log`: 是否打印详细的处理过程日志。设为 `false` 时（推荐用于定时任务无人值守场景）：循环内的逐条进度、响应诊断、页面快照、失败样本日志（`./logs` 目录）全部静默；错误与警告（`console.error`）始终输出
 - `action_interval_time`: 操作间隔时间（毫秒），设置过短易被 CSDN 屏蔽
 
 ### 安装和配置实例
@@ -129,6 +129,13 @@ npm run single
 
 # 全量模式：导出所有文章
 npm run all
+```
+
+### 单元测试
+
+```bash
+# 仅运行纯函数单元测试（不需要浏览器、不需要 config.yml）
+npm run test:unit
 ```
 
 
