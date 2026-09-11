@@ -560,14 +560,21 @@ async function fetchArticleData(page, article, retryCount) {
     // （修复：原来"先注册监听再等待2秒"会让上一篇页面迟到的 getArticle 落在监听窗口内被误命中）
     await sleep(ACTION_INTERVAL_TIME);
     // 注册监听后立刻导航，尽量缩短监听窗口；判据中已锁定本篇 articleId
+    // 计时起点：监听窗口开启时刻（此后的等待都可能逼近 ARTICLE_API_TIMEOUT）
+    const listenStartedAt = Date.now();
     const responsePromise = page.waitForResponse(createArticleDataResponsePredicate(article.articleId), {
         timeout: ARTICLE_API_TIMEOUT
     });
     // 防止页面导航失败时该Promise长期悬挂并产生未处理的拒绝
     responsePromise.catch(() => { });
     await navigateWithRetryFallback(page, article.editUrl, retryCount);
+    const navigatedAt = Date.now();
 
     const response = await responsePromise;
+    // 耗时观测：命中正确响应的等待时长（相对监听窗口起点）及其中的导航耗时
+    // 用途：观测该值是否逐步逼近 ARTICLE_API_TIMEOUT（超时前兆），便于在失败前发现退化
+    const waitMs = Date.now() - listenStartedAt;
+    const navigateMs = navigatedAt - listenStartedAt;
     const request = response.request();
     const matchedUrl = safeCall(response, 'url') || '';
     const status = safeCall(response, 'status');
@@ -579,7 +586,7 @@ async function fetchArticleData(page, article, retryCount) {
     // 过程日志：期望ID与实际命中ID同时打印，便于一眼发现"错配"
     logProcess(`[API] 文章 ${article.articleId} 命中响应：expect=${expectedIdMarker} match=${matchedUrl} ` +
         `${safeCall(request, 'method')} ${status} ${safeCall(response, 'statusText')} ` +
-        `fromCache=${safeCall(response, 'fromCache')}`);
+        `fromCache=${safeCall(response, 'fromCache')} 等待=${waitMs}ms(其中导航=${navigateMs}ms)`);
     // 详细日志：完整的响应诊断信息（方法/状态/请求体/白名单响应头/frame地址）
     logProcess('[API] 响应诊断信息：', JSON.stringify(describeResponse(response)));
 
