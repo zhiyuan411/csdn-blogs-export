@@ -63,6 +63,34 @@ function appendSpmParam(urlStr) {
     url.searchParams.set('spm', SPM);
     return url.toString();
 }
+
+// =====================================
+// 诊断与网络记录相关常量（P0/P2 增强）
+// =====================================
+// 文章数据接口地址（所有文章共用同一URL，articleId在POST body中）
+const ARTICLE_DATA_API_URLS = [
+    'https://bizapi.csdn.net/blog-console-api/v3/editor/getArticle',
+    'https://bizapi.csdn.net/blog-console-api/v1/editor/getArticle'
+];
+// 失败样本日志目录（P2 诊断增强）
+const FAILURE_LOG_DIR = './logs';
+// 每个页面保留的最近网络事件条数（用于异常时输出网络层上下文）
+const NETWORK_EVENT_BUFFER_SIZE = 50;
+// 响应头白名单：仅保留与问题定位相关的头，避免 set-cookie 等敏感信息落盘
+const DIAGNOSTIC_HEADER_WHITELIST = [
+    'content-type',
+    'content-length',
+    'cache-control',
+    'vary',
+    'access-control-allow-origin',
+    'access-control-allow-methods',
+    'access-control-max-age'
+];
+// 网络事件记录过滤：仅记录接口相关域名/路径，避免日志噪音
+const NETWORK_EVENT_URL_KEYWORDS = ['bizapi.csdn.net', '/blog-console-api/', '/community/home-api/'];
+// 页面 -> 最近网络事件缓冲（WeakMap，页面关闭后可被回收）
+const networkEventBuffers = new WeakMap();
+
 // 等待指定的时间（毫秒）
 const sleep = async (ms) => {
     await new Promise(resolve => setTimeout(resolve, ms));
@@ -74,6 +102,8 @@ const createNewPage = async (browser) => {
         width: VIEWPORT_WIDTH,
         height: VIEWPORT_HEIGHT
     });
+    // 挂载网络事件记录器（仅当开启过程日志时），便于异常时回放网络层上下文
+    attachNetworkRecorder(page);
     return page;
 };
 console.log("开始执行CSDN导出任务！");
@@ -223,7 +253,7 @@ async function deleteFolderRecursive(dirPath) {
 
 /**
  * 在异常或关键节点时输出调试快照（仅当 PROCESS_LOG 启用时生效）
- * 用于问题定位，后续可扩展（如截图、控制台日志等）
+ * 用于问题定位，包含：页面URL、网络事件回放、页面HTML
  * @param {import('puppeteer').Page} page - 当前页面对象
  * @param {string} [context=''] - 上下文描述（如 "登录失败"），可选
  */
@@ -231,13 +261,312 @@ async function debugSnapshot(page, context = '') {
     if (!PROCESS_LOG) return;
 
     try {
-        const url = page.url();
-        const html = await page.content();
+        const url = safePageUrl(page);
         console.log(`\n[DEBUG SNAPSHOT] ${context}`);
         console.log(`URL:  ${url}`);
+        // 网络事件回放：用于区分预检/缓存/中止等无响应体的情况
+        const networkEvents = getNetworkEvents(page);
+        console.log(`网络事件（最近 ${networkEvents.length} 条）:`);
+        if (networkEvents.length === 0) {
+            console.log('  （无接口相关网络事件记录）');
+        } else {
+            networkEvents.forEach(event => console.log(`  ${JSON.stringify(event)}`));
+        }
+        const html = await page.content();
         console.log(`HTML:\n ${html}\n`);
     } catch (err) {
         console.error(`[DEBUG SNAPSHOT] ${context} 获取快照失败:`, err.message);
+    }
+}
+
+// =====================================
+// 诊断与网络记录工具（P0/P2 增强）
+// =====================================
+/**
+ * 安全读取页面URL（页面已关闭/异常时返回空字符串）
+ * @param {import('puppeteer').Page} page - 页面对象
+ * @returns {string} 页面URL
+ */
+function safePageUrl(page) {
+    try {
+        return page ? page.url() : '';
+    } catch (err) {
+        return '';
+    }
+}
+
+/**
+ * 安全调用响应的可选项方法（不同Puppeteer版本/异常情况下返回undefined）
+ * @param {Object} target - 目标对象
+ * @param {string} methodName - 方法名
+ * @returns {*} 方法返回值或undefined
+ */
+function safeCall(target, methodName) {
+    try {
+        return target && typeof target[methodName] === 'function' ? target[methodName]() : undefined;
+    } catch (err) {
+        return undefined;
+    }
+}
+
+/**
+ * 按白名单提取响应头（避免 set-cookie 等敏感信息落盘）
+ * @param {Object} headers - 原始响应头对象
+ * @returns {Object} 白名单过滤后的响应头
+ */
+function pickHeaders(headers = {}) {
+    const picked = {};
+    for (const [key, value] of Object.entries(headers)) {
+        if (DIAGNOSTIC_HEADER_WHITELIST.includes(key.toLowerCase())) {
+            picked[key.toLowerCase()] = value;
+        }
+    }
+    return picked;
+}
+
+/**
+ * 判断URL是否为文章数据接口
+ * @param {string} url - 响应URL
+ * @returns {boolean} 是否命中
+ */
+function isArticleDataUrl(url) {
+    return ARTICLE_DATA_API_URLS.some(apiUrl => url.includes(apiUrl));
+}
+
+/**
+ * 判断响应是否为文章数据接口的“真实数据响应”
+ * 判据：URL命中 + 请求方法（排除OPTIONS预检）+ HTTP状态 + Content-Type
+ * 说明：仅用Content-Type判断会误命中CORS预检（OPTIONS）等无响应体的响应，
+ *      进而导致 response.json() 抛出 "Could not load body for this request..."。
+ * @param {import('puppeteer').HTTPResponse} response - 响应对象
+ * @returns {boolean} 是否为真实数据响应
+ */
+function isArticleDataResponse(response) {
+    let url = '';
+    try {
+        url = response.url();
+    } catch (err) {
+        return false;
+    }
+    if (!isArticleDataUrl(url)) return false;
+    // 关键修复：排除预检（OPTIONS）等非数据请求
+    const method = safeCall(response.request(), 'method');
+    if (method === 'OPTIONS') return false;
+    // 仅接受成功响应（2xx）
+    if (!response.ok()) return false;
+    const contentType = response.headers()['content-type'] || '';
+    return contentType.includes('application/json');
+}
+
+/**
+ * 提取响应的诊断信息（方法/状态/缓存/请求体/响应头等）
+ * @param {import('puppeteer').HTTPResponse} response - 响应对象
+ * @returns {Object} 诊断信息
+ */
+function describeResponse(response) {
+    const request = response.request();
+    const failure = safeCall(request, 'failure');
+    return {
+        method: safeCall(request, 'method'),
+        url: safeCall(response, 'url'),
+        status: safeCall(response, 'status'),
+        statusText: safeCall(response, 'statusText'),
+        ok: safeCall(response, 'ok'),
+        fromCache: safeCall(response, 'fromCache'),
+        fromServiceWorker: safeCall(response, 'fromServiceWorker'),
+        resourceType: safeCall(request, 'resourceType'),
+        postData: safeCall(request, 'postData') || null,
+        failure: failure ? failure.errorText : null,
+        headers: pickHeaders(safeCall(response, 'headers') || {})
+    };
+}
+
+/**
+ * 获取页面的最近网络事件（用于异常上下文）
+ * @param {import('puppeteer').Page} page - 页面对象
+ * @returns {Array<Object>} 网络事件数组
+ */
+function getNetworkEvents(page) {
+    return page ? (networkEventBuffers.get(page) || []) : [];
+}
+
+/**
+ * 为页面挂载网络事件记录器（旁路记录，不改变原有监听逻辑）
+ * 仅记录接口相关响应的状态/方法/缓存标记与请求失败事件
+ * @param {import('puppeteer').Page} page - 页面对象
+ */
+function attachNetworkRecorder(page) {
+    if (!PROCESS_LOG || !page) return;
+    const buffer = [];
+    networkEventBuffers.set(page, buffer);
+    const push = (event) => {
+        buffer.push(event);
+        if (buffer.length > NETWORK_EVENT_BUFFER_SIZE) {
+            buffer.shift();
+        }
+    };
+
+    page.on('requestfailed', (request) => {
+        push({
+            type: 'requestfailed',
+            time: new Date().toISOString(),
+            method: safeCall(request, 'method'),
+            resourceType: safeCall(request, 'resourceType'),
+            errorText: safeCall(request, 'failure')?.errorText || null,
+            url: safeCall(request, 'url')
+        });
+    });
+
+    page.on('response', (response) => {
+        let url = '';
+        try {
+            url = response.url();
+        } catch (err) {
+            return;
+        }
+        // 仅记录接口相关响应，避免日志噪音
+        if (!NETWORK_EVENT_URL_KEYWORDS.some(keyword => url.includes(keyword))) return;
+        push({
+            type: 'response',
+            time: new Date().toISOString(),
+            method: safeCall(response.request(), 'method'),
+            status: safeCall(response, 'status'),
+            fromCache: safeCall(response, 'fromCache'),
+            contentType: (safeCall(response, 'headers') || {})['content-type'] || null,
+            url
+        });
+    });
+}
+
+/**
+ * 保存失败样本日志（P2 诊断增强），便于事后离线比对
+ * @param {string} articleId - 文章ID
+ * @param {Object} payload - 需要落盘的诊断信息
+ */
+async function saveFailureLog(articleId, payload) {
+    try {
+        await fs.mkdir(FAILURE_LOG_DIR, {
+            recursive: true
+        });
+        const timeSuffix = new Date().toISOString().replace(/[:.]/g, '-');
+        const filePath = path.join(FAILURE_LOG_DIR, `fail-${articleId}-${timeSuffix}.json`);
+        await fs.writeFile(filePath, JSON.stringify(payload, null, 2), 'utf8');
+        console.log(`已保存失败样本日志：${filePath}`);
+    } catch (err) {
+        console.error(`保存失败样本日志时出错：${err.message}`);
+    }
+}
+
+/**
+ * 兼容不同 Puppeteer 版本的 XPath 查询封装
+ * 说明：新版 Puppeteer 移除了 page.$x，此处优先使用 $x，缺失时回退到 ::-p-xpath
+ * @param {import('puppeteer').Page} page - 页面对象
+ * @param {string} xpath - XPath 表达式
+ * @returns {Promise<Array>} 匹配到的元素数组
+ */
+async function queryXPath(page, xpath) {
+    if (typeof page.$x === 'function') {
+        return await page.$x(xpath);
+    }
+    return await page.$$(`::-p-xpath(${xpath})`);
+}
+
+/**
+ * 按重试次数选择导航等待策略（重试次数越大，等待越充分）
+ * 修复：原实现中 retryCount > 0 分支在前，导致 networkidle2 分支永远不可达
+ * @param {import('puppeteer').Page} page - 页面对象
+ * @param {string} url - 目标地址
+ * @param {number} retryCount - 当前重试次数
+ */
+async function navigateWithRetryFallback(page, url, retryCount) {
+    if (retryCount > 1) {
+        // 多次重试状态时，等待HTML文档和相关资源已加载
+        await page.goto(url, {
+            timeout: PAGE_LOAD_TIMEOUT.NETWORKIDLE2,
+            waitUntil: 'networkidle2'
+        });
+    } else if (retryCount > 0) {
+        // 重试状态时，等待HTML文档和相关资源已加载
+        await page.goto(url, {
+            timeout: PAGE_LOAD_TIMEOUT.LOAD,
+            waitUntil: 'load'
+        });
+    } else {
+        // 首次访问：等待HTML文档已加载（无需等待图片等资源加载）
+        await page.goto(url, {
+            timeout: PAGE_LOAD_TIMEOUT.DOMCONTENTLOADED,
+            waitUntil: 'domcontentloaded'
+        });
+    }
+}
+
+/**
+ * 访问文章编辑页并抓取文章数据接口的响应体
+ * 统一了：响应监听、空响应体校验、JSON解析与诊断日志，避免直接 response.json() 抛出难以定位的错误
+ * @param {import('puppeteer').Page} page - 页面对象
+ * @param {Object} article - 文章信息对象（需包含 articleId、editUrl）
+ * @param {number} retryCount - 当前重试次数
+ * @returns {Promise<Object>} 接口返回的JSON对象
+ */
+async function fetchArticleData(page, article, retryCount) {
+    // 先注册监听，避免错过请求
+    const responsePromise = page.waitForResponse(isArticleDataResponse);
+    // 防止页面导航失败时该Promise长期悬挂并产生未处理的拒绝
+    responsePromise.catch(() => { });
+    // 将每次处理完一篇文章后的等待时间放在此处，可以避免添加监听的耗时导致错过请求
+    await sleep(ACTION_INTERVAL_TIME);
+    // 访问编辑页面
+    await navigateWithRetryFallback(page, article.editUrl, retryCount);
+
+    const response = await responsePromise;
+    const request = response.request();
+    // 命中响应后立即输出关键诊断信息（方法/状态/缓存/请求体等）
+    console.log(`[API] 文章 ${article.articleId} 命中响应：${safeCall(request, 'method')} ${safeCall(response, 'status')} ` +
+        `${safeCall(response, 'statusText')} fromCache=${safeCall(response, 'fromCache')} url=${safeCall(response, 'url')}`);
+    if (PROCESS_LOG) {
+        console.log('[API] 响应诊断信息：', JSON.stringify(describeResponse(response)));
+    }
+
+    // 安全读取响应体：先取文本，判断空体/非JSON
+    const bodyText = await response.text().catch(() => '');
+    if (!bodyText) {
+        throw new Error(`命中空响应体（无法读取body）：method=${safeCall(request, 'method')} ` +
+            `status=${safeCall(response, 'status')} contentType=${(safeCall(response, 'headers') || {})['content-type'] || 'N/A'} ` +
+            `fromCache=${safeCall(response, 'fromCache')} url=${safeCall(response, 'url')}`);
+    }
+    try {
+        return JSON.parse(bodyText);
+    } catch (err) {
+        throw new Error(`响应体不是合法JSON（status=${safeCall(response, 'status')}）：${bodyText.slice(0, 200)}`);
+    }
+}
+
+/**
+ * 安全解析JSON响应（事件监听场景使用）
+ * 排除预检（OPTIONS）响应，并在读取/解析失败时输出诊断信息，
+ * 避免直接使用 response.json() 抛出难以定位的 "Could not load body..." 异常
+ * @param {import('puppeteer').HTTPResponse} response - 响应对象
+ * @param {string} [context=''] - 上下文描述
+ * @returns {Promise<Object|null>} 解析结果（失败返回null）
+ */
+async function safeJsonFromResponse(response, context = '') {
+    // 排除CORS预检等无响应体的请求
+    if (safeCall(response.request(), 'method') === 'OPTIONS') {
+        return null;
+    }
+    let bodyText = '';
+    try {
+        bodyText = await response.text();
+    } catch (err) {
+        console.error(`${context} 读取响应体失败：${err.message}（method=${safeCall(response.request(), 'method')} status=${safeCall(response, 'status')}）`);
+        return null;
+    }
+    if (!bodyText) return null;
+    try {
+        return JSON.parse(bodyText);
+    } catch (err) {
+        console.error(`${context} 解析响应失败：${err.message}（method=${safeCall(response.request(), 'method')} status=${safeCall(response, 'status')}）`);
+        return null;
     }
 }
 
@@ -665,7 +994,7 @@ async function login(browser) {
 
     // ========== 补回被遗漏的变量定义（关键修复点） ==========
     // 使用XPath来查找“密码登录”Tab（定义passwordLoginTab变量）
-    const passwordLoginTab = await page.$x('//span[text()="密码登录"]');
+    const passwordLoginTab = await queryXPath(page, '//span[text()="密码登录"]');
     // 使用CSS选择器来查找login-third-passwd元素（定义loginThirdPasswd变量）
     const loginThirdPasswd = await page.$('span.login-third-passwd');
     // =======================================================
@@ -679,7 +1008,7 @@ async function login(browser) {
         console.log('点击了login-third-passwd元素');
     }
     // 在“手机号/邮箱/用户名”输入框内输入用户ID
-    const usernameInput = await page.$x('//input[@placeholder="手机号/邮箱/用户名"]');
+    const usernameInput = await queryXPath(page, '//input[@placeholder="手机号/邮箱/用户名"]');
     if (usernameInput.length > 0) {
         await usernameInput[0].type(CSDN_USER_ID);
         await sleep(ACTION_INTERVAL_TIME);
@@ -687,7 +1016,7 @@ async function login(browser) {
         throw new Error('尝试登录失败：找不到“手机号/邮箱/用户名”输入框');
     }
     // 在“密码”输入框输入密码
-    const passwordInput = await page.$x('//input[@placeholder="密码"]');
+    const passwordInput = await queryXPath(page, '//input[@placeholder="密码"]');
     if (passwordInput.length > 0) {
         await passwordInput[0].type(CSDN_USER_PWD);
         await sleep(ACTION_INTERVAL_TIME);
@@ -695,7 +1024,7 @@ async function login(browser) {
         throw new Error('尝试登录失败：找不到“密码”输入框');
     }
     // 勾选“同意协议”勾选框
-    const agreeCheckbox = await page.$x('//i[contains(@class, "icon-nocheck")]');
+    const agreeCheckbox = await queryXPath(page, '//i[contains(@class, "icon-nocheck")]');
     if (agreeCheckbox.length > 0) {
         await agreeCheckbox[0].click();
         await sleep(ACTION_INTERVAL_TIME);
@@ -703,7 +1032,7 @@ async function login(browser) {
         console.log('登录改版：找不到“同意协议”勾选框，直接忽略');
     }
     // 点击“登录”按钮
-    const loginButton = await page.$x('//button[text()="登录"]');
+    const loginButton = await queryXPath(page, '//button[text()="登录"]');
     if (loginButton.length > 0) {
         await loginButton[0].click();
     } else {
@@ -787,6 +1116,8 @@ async function getQuickModeArticleInfos(browser, userId, startDate) {
             break;
         } catch (error) {
             console.error(`访问最近文章页面失败：${error.message}`);
+            // 补全错误上下文：输出完整堆栈
+            console.error(error.stack || error);
             if (retryCount >= MAX_RETRY_COUNT) {
                 removeResponseListener?.();
                 throw new Error(`访问最近文章页面已重试${retryCount}次失败`);
@@ -882,8 +1213,8 @@ function bindQuickModeResponseListener(page, articleInfos, TARGET_URL, startDate
         const requestUrl = response.url();
         if (requestUrl.includes(TARGET_URL) && !stopFlag.hasReachedEarlyDate) {
             try {
-                const data = await response.json();
-                if (data.code === 200 && data.data && data.data.list) {
+                const data = await safeJsonFromResponse(response, '快速模式-解析API响应');
+                if (data && data.code === 200 && data.data && data.data.list) {
                     // 遍历列表，筛选type=blog的项
                     for (const item of data.data.list) {
                         if (item.type !== 'blog' || !item.updateTime) {
@@ -915,7 +1246,7 @@ function bindQuickModeResponseListener(page, articleInfos, TARGET_URL, startDate
                     }
                 }
             } catch (e) {
-                console.error(`快速模式-解析API响应失败：${e.message}`);
+                console.error(`快速模式-处理API响应失败：${e.message}`);
             }
         }
     };
@@ -949,8 +1280,8 @@ function bindArticleResponseListener(page, articleInfos, TARGET_URL, totalArticl
         const requestUrl = response.url();
         if (requestUrl.includes(TARGET_URL)) {
             try {
-                const data = await response.json();
-                if (data.code === 200 && data.data && data.data.list) {
+                const data = await safeJsonFromResponse(response, '解析文章列表API响应');
+                if (data && data.code === 200 && data.data && data.data.list) {
                     // 只添加未存在的文章，避免重复（清零后这里自然是全新数据）
                     data.data.list.forEach((article) => {
                         if (!articleInfos.some(info => info.articleId === article.articleId)) {
@@ -966,7 +1297,7 @@ function bindArticleResponseListener(page, articleInfos, TARGET_URL, totalArticl
                     totalArticlesRef.value = data.data.total;
                 }
             } catch (e) {
-                console.error(`解析文章列表API响应失败: ${e.message}`);
+                console.error(`处理文章列表API响应失败: ${e.message}`);
             }
         }
     };
@@ -1008,27 +1339,14 @@ async function _getArticleInfoArray(browser, userId, filterType) {
         try {
             // 绑定响应监听（每次创建新页面都要重新绑定）
             removeResponseListener = bindArticleResponseListener(page, articleInfos, TARGET_URL, totalArticlesRef);
-            // 修复：先判断多次重试（retryCount > 1），再判断首次重试（retryCount > 0）
-            if (retryCount > 1) {
-                await page.goto(articles_page_url, {
-                    timeout: PAGE_LOAD_TIMEOUT.NETWORKIDLE2,
-                    waitUntil: 'networkidle2'
-                });
-            } else if (retryCount > 0) {
-                await page.goto(articles_page_url, {
-                    timeout: PAGE_LOAD_TIMEOUT.LOAD,
-                    waitUntil: 'load'
-                });
-            } else {
-                await page.goto(articles_page_url, {
-                    timeout: PAGE_LOAD_TIMEOUT.DOMCONTENTLOADED,
-                    waitUntil: 'domcontentloaded'
-                });
-            }
+            // 按重试次数选择导航等待策略（重试次数越大，等待越充分）
+            await navigateWithRetryFallback(page, articles_page_url, retryCount);
             await sleep(ACTION_INTERVAL_TIME);
             break;
         } catch (error) {
             console.error(`访问列表页时发生错误：${error.message}`);
+            // 补全错误上下文：输出完整堆栈
+            console.error(error.stack || error);
             if (retryCount >= MAX_RETRY_COUNT) {
                 // 取消监听后再抛出错误，避免内存泄漏
                 removeResponseListener?.();
@@ -1132,25 +1450,8 @@ async function filterArticlesByLastTime(dayOffset, articleInfos) {
                     page = await createNewPage(browser);
                     pageUseCount = 0; // 重置计数器
                 }
-                if (retryCount > 0) {
-                    // 重试状态时，访问详情页面并等待HTML文档和相关资源已加载
-                    await page.goto(article.url, {
-                        timeout: PAGE_LOAD_TIMEOUT.LOAD,
-                        waitUntil: 'load'
-                    });
-                } else if (retryCount > 1) {
-                    // 多次重试状态时，访问详情页面并等待HTML文档和相关资源已加载
-                    await page.goto(article.url, {
-                        timeout: PAGE_LOAD_TIMEOUT.NETWORKIDLE2,
-                        waitUntil: 'networkidle2'
-                    });
-                } else {
-                    // 访问详情页面并等待HTML文档已加载（无需等待图片等资源加载）
-                    await page.goto(article.url, {
-                        timeout: PAGE_LOAD_TIMEOUT.DOMCONTENTLOADED,
-                        waitUntil: 'domcontentloaded'
-                    });
-                }
+                // 按重试次数选择导航等待策略（重试次数越大，等待越充分）
+                await navigateWithRetryFallback(page, article.url, retryCount);
                 pageUseCount++; // 增加 page 使用次数
                 // 每次访问完一篇文章后，等待一下
                 await sleep(ACTION_INTERVAL_TIME);
@@ -1174,15 +1475,15 @@ async function filterArticlesByLastTime(dayOffset, articleInfos) {
                 // 将 timeValue 添加到 article 对象中
                 article.lastTime = timeValue;
                 if (timeDate > startDate) {
-                    // 获取主题：使用 page.$x 执行 XPath 查询并获取匹配的元素列表，解构并获取第一个元素
-                    const [element] = await page.$x('//a[@class="tag-link" and @rel="noopener"]');
+                    // 获取主题：使用 queryXPath 执行 XPath 查询并获取匹配的元素列表，解构并获取第一个元素
+                    const [element] = await queryXPath(page, '//a[@class="tag-link" and @rel="noopener"]');
                     let textContent = null;
                     if (element) {
                         // 如果找到匹配的元素，则提取其文本内容并去除首尾空格
                         textContent = await element.evaluate(el => el.textContent.trim());
                     } else {
                         // 备选方案：使用span[@class="tit"]定位并获取第一个元素的文本
-                        const [spanElement] = await page.$x('//span[@class="tit"]');
+                        const [spanElement] = await queryXPath(page, '//span[@class="tit"]');
                         if (spanElement) {
                             textContent = await spanElement.evaluate(el => el.textContent.trim());
                         }
@@ -1194,6 +1495,21 @@ async function filterArticlesByLastTime(dayOffset, articleInfos) {
                 break;
             } catch (error) {
                 console.error(`处理文章 ${article.articleId} 时发生错误: ${error.message}`);
+                // 补全错误上下文：完整堆栈 + 页面/网络层诊断信息
+                console.error(error.stack || error);
+                await saveFailureLog(article.articleId, {
+                    mission: 'filterArticlesByLastTime',
+                    articleId: article.articleId,
+                    url: article.url,
+                    retryCount,
+                    pageUrl: safePageUrl(page),
+                    error: {
+                        name: error.name,
+                        message: error.message,
+                        stack: error.stack
+                    },
+                    networkEvents: getNetworkEvents(page)
+                });
                 if (retryCount >= MAX_RETRY_COUNT) {
                     // console.error(`文章 ${article.articleId} 在重试${retryCount}次后仍然失败，放弃处理。`);
                     await debugSnapshot(page);
@@ -1303,42 +1619,20 @@ async function downloadArticles(articleInfos, continueDownload = false) {
                     await page.setDefaultNavigationTimeout(DEFAULT_NAVIGATION_TIMEOUT); // 设置默认超时时间
                     pageUseCount = 0; // 重置计数器
                 }
-                // 监听获取原文数据的接口
-                const responsePromise = page.waitForResponse(response => {
-                    const url = response.url();
-                    // 通过检查响应头中的 Content-Type 来预检请求（即 OPTIONS 请求）等非 JSON 响应
-                    const isJsonResponse = response.headers()['content-type']?.includes('application/json');
-                    return (isJsonResponse && (url.includes('https://bizapi.csdn.net/blog-console-api/v3/editor/getArticle') || url.includes('https://bizapi.csdn.net/blog-console-api/v1/editor/getArticle')));
-                });
-                // 将每次处理完一篇文章后的等待时间提前到此处，可以避免添加监听的耗时导致错过请求
-                await sleep(ACTION_INTERVAL_TIME);
-                if (retryCount > 0) {
-                    // 重试状态时，访问编辑页面并等待HTML文档和相关资源已加载
-                    await page.goto(article.editUrl, {
-                        timeout: PAGE_LOAD_TIMEOUT.LOAD,
-                        waitUntil: 'load'
-                    });
-                } else if (retryCount > 1) {
-                    // 多次重试状态时，访问编辑页面并等待HTML文档和相关资源已加载
-                    await page.goto(article.editUrl, {
-                        timeout: PAGE_LOAD_TIMEOUT.NETWORKIDLE2,
-                        waitUntil: 'networkidle2'
-                    });
-                } else {
-                    // 访问编辑页面并等待HTML文档已加载（无需等待图片等资源加载）
-                    await page.goto(article.editUrl, {
-                        timeout: PAGE_LOAD_TIMEOUT.DOMCONTENTLOADED,
-                        waitUntil: 'domcontentloaded'
-                    });
-                }
+                // 监听文章数据接口（判据：URL + 请求方法 + HTTP状态 + Content-Type），
+                // 并统一处理空响应体校验、JSON解析与诊断日志
+                const responseBody = await fetchArticleData(page, article, retryCount);
                 pageUseCount++; // 增加 page 使用次数
-                // 等待响应
-                const response = await responsePromise;
-                // console.log(response);
-                const responseBody = await response.json();
-                // console.log(responseBody);
                 if (responseBody.code !== 200) {
-                    console.error(`获取文章 ${article.articleId} 数据时发生错误: ${responseBody.msg}`);
+                    // 业务错误码非200：纳入重试计数并做退避，避免无限循环
+                    const businessError = `获取文章 ${article.articleId} 数据时发生错误: code=${responseBody.code}, msg=${responseBody.msg}`;
+                    console.error(businessError);
+                    if (retryCount >= MAX_RETRY_COUNT) {
+                        throw new Error(`${businessError}（业务错误码非200，已重试${retryCount}次后放弃）`);
+                    }
+                    retryCount++;
+                    console.log(`业务错误码非200，进行第${retryCount}次重试`);
+                    await sleep(ACTION_INTERVAL_TIME * retryCount); // 退避等待
                     continue;
                 }
                 const {
@@ -1360,6 +1654,21 @@ async function downloadArticles(articleInfos, continueDownload = false) {
                 break;
             } catch (error) {
                 console.error(`处理文章 ${article.articleId} 时发生错误：${error.message}`);
+                // 补全错误上下文：完整堆栈 + 页面/网络层诊断信息（含 method/status/fromCache/failure）
+                console.error(error.stack || error);
+                await saveFailureLog(article.articleId, {
+                    mission: 'downloadArticles',
+                    articleId: article.articleId,
+                    editUrl: article.editUrl,
+                    retryCount,
+                    pageUrl: safePageUrl(page),
+                    error: {
+                        name: error.name,
+                        message: error.message,
+                        stack: error.stack
+                    },
+                    networkEvents: getNetworkEvents(page)
+                });
                 if (retryCount >= MAX_RETRY_COUNT) {
                     // console.error(`文章 ${article.articleId} 在重试${retryCount}次后仍然失败，放弃处理。`);
                     await debugSnapshot(page);
