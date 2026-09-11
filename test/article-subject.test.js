@@ -2,11 +2,13 @@
  * 主题（CSDN 分类专栏）提取的单元测试
  *
  * 覆盖三类回归：
- *  1. 2026-09 详情页改版：旧选择器 a.tag-link / span.tit 失效 → 必须由新版策略接管；
- *     其中「付费专栏」与「免费专栏」两条链路结构完全不同，必须各自有策略覆盖；
+ *  1. 三类详情页结构必须各自有策略覆盖：普通/免费（头部「收录于」徽标）、收费（付费专栏卡）、
+ *     VIP（右侧工具栏「专栏目录」按钮 data-title）；
+ *     旧选择器 a.tag-link / span.tit 已在新版失效，只作最后兜底；
  *  2. 已证实错误的来源不得再出现在策略列表中：
  *     meta[article:section]（实测=文章第一个标签，如 qt/CoT）、新版标签 class（tag-link-new）、
- *     左侧栏「分类专栏」面板（列出作者全部专栏，与本文无关）；
+ *     「分类专栏」面板（实测列出作者全部 17 个专栏，且页面有两份重复副本 →
+ *      曾把 VIP 文章 156650675 判成「计算机技术杂谈 付费」）；
  *  3. 改版期间（或再次改版）不能让提取异常中断整个导出：任何异常都必须降级为 subject=null。
  *
  * 说明：浏览器端的采集回调通过 node:vm + 最小 DOM 桩执行，因此本测试不需要浏览器与 config.yml。
@@ -34,10 +36,11 @@ const BADGE_SELECTOR = '#article-header-collect-list .article-header-badge .badg
 const BADGE_UNSCOPED_SELECTOR = '.article-header-badge .badge-name';
 const BADGE_LOOSE_SELECTOR = '#article-header-collect-list .badge-name';
 const COLUMN_TITLE_SELECTOR = 'a.column-detail-link[title]';
-const CATEGORY_HREF_SELECTOR = 'a[href*="category_"]';
+// 「专栏目录」按钮（普通/收费/VIP 三类页面通吃，服务端直出且每页唯一）
+const COLUMN_DIRECTORY_SELECTOR = 'a.bt-columnlist-show[data-title]';
+const TOOL_DIRECTORY_SELECTOR = '.tool-directory [data-title]';
 // 污染区（必须被策略排除）
 const MORE_BTN_SELECTOR = '#article-header-collect-more-btn';
-const ASIDE_SELECTOR = '#asideCategory';
 // 旧版详情页的真实选择器
 const LEGACY_TAG_LINK_XPATH = '//a[@class="tag-link" and @rel="noopener"]';
 const LEGACY_TIT_XPATH = '//span[@class="tit"]';
@@ -127,6 +130,8 @@ test('normalizeSubject：接受正常专栏名，过滤噪声/超长/纯数字/�
     // 文章标签的渲染形式（以 # 开头）不是主题
     assert.equal(normalizeSubject('#mysql'), null);
     assert.equal(normalizeSubject('#读书笔记'), null);
+    // 「专栏目录」按钮文案不是主题（data-title 缺失时的兜底防线）
+    assert.equal(normalizeSubject('专栏目录'), null);
     // 超长（正文/描述误命中）与无文字内容
     assert.equal(normalizeSubject('主'.repeat(SUBJECT_MAX_LENGTH + 1)), null);
     assert.equal(normalizeSubject('12345'), null);
@@ -151,41 +156,66 @@ test('策略列表：命名唯一、类型合法、选择器与说明非空', ()
     }
 });
 
-test('策略列表：付费专栏卡优先于头部徽标（同时属于付费与免费专栏时归入付费目录）', () => {
+test('策略列表：付费专栏卡优先于「专栏目录」与头部徽标（同时属于多类专栏时归入付费目录）', () => {
     const names = strategyNames();
-    assert.ok(names.indexOf('pay-column-card-title') < names.indexOf('header-collect-badge-name'));
-    assert.ok(names.indexOf('pay-column-card-tit') < names.indexOf('header-collect-badge-name'));
+    assert.ok(names.indexOf('pay-column-card-title') < names.indexOf('column-directory-title'));
+    assert.ok(names.indexOf('pay-column-card-tit') < names.indexOf('column-directory-title'));
+    // 「专栏目录」按钮是三类页面通吃且服务端直出的首选来源，必须先于只覆盖单一结构的徽标策略
+    assert.ok(names.indexOf('column-directory-title') < names.indexOf('header-collect-badge-name'));
+    assert.ok(names.indexOf('column-directory-title') < names.indexOf('legacy-tag-link'));
+    assert.ok(names.indexOf('column-directory-title') < names.indexOf('legacy-span-tit'));
     assert.ok(SUBJECT_STRATEGIES.some(strategy => strategy.selector === PAY_CARD_TITLE_SELECTOR));
     assert.ok(SUBJECT_STRATEGIES.some(strategy => strategy.selector === PAY_CARD_TIT_SELECTOR));
+    assert.ok(SUBJECT_STRATEGIES.some(strategy => strategy.selector === COLUMN_DIRECTORY_SELECTOR));
+    assert.ok(SUBJECT_STRATEGIES.some(strategy => strategy.selector === TOOL_DIRECTORY_SELECTOR));
     assert.ok(SUBJECT_STRATEGIES.some(strategy => strategy.selector === BADGE_SELECTOR));
 });
 
-test('策略列表：新版策略优先于旧版与泛化兜底', () => {
+test('策略列表：新版策略优先于旧版选择器（旧版仅作最后兜底）', () => {
     const names = strategyNames();
     const indexOf = name => names.indexOf(name);
     assert.ok(indexOf('header-collect-badge-name') < indexOf('legacy-tag-link'));
     assert.ok(indexOf('header-collect-badge-name') < indexOf('legacy-span-tit'));
-    assert.ok(indexOf('legacy-span-tit') < indexOf('category-href-link'));
+    // 旧版选择器排在列表末尾
+    assert.equal(indexOf('legacy-span-tit'), names.length - 1);
 });
 
-test('策略列表：不得使用已证实错误的来源（meta:article:section、新版标签 tag-link-new）', () => {
+test('策略列表：不得使用已证实错误的来源（meta / 新版标签 / 作者全部专栏列表）', () => {
     for (const strategy of SUBJECT_STRATEGIES) {
         // meta article:section 实测等于文章的第一个标签（qt / CoT / mysql），与专栏不是同一命名空间
         assert.ok(!strategy.selector.includes('article:section'),
             `${strategy.name} 使用了 meta article:section（实测=首个标签，非专栏）`);
         assert.ok(!strategy.selector.includes('tag-link-new'),
             `${strategy.name} 命中了新版标签选择器，标签不是主题`);
+        // 「分类专栏」面板列出作者全部专栏（且页面上有两份重复副本），按专栏链接泛化匹配必然取错
+        assert.ok(!strategy.selector.includes('href*="category_"'),
+            `${strategy.name} 用专栏链接泛化匹配，会把作者全部专栏当主题`);
+        assert.ok(!strategy.selector.includes('special-column-name'),
+            `${strategy.name} 命中了「分类专栏」面板（作者全部专栏，与本文归属无关）`);
     }
+    assert.ok(!strategyNames().includes('category-href-link'),
+        'category-href-link 已删除（实测取到作者全部专栏）');
+    assert.ok(!strategyNames().includes('meta-article-section'),
+        'meta-article-section 已删除（实测=文章第一个标签）');
 });
 
-test('策略列表：宽松策略必须带排除规则（左侧栏「分类专栏」与"更多"折叠区）', () => {
+test('策略列表：徽标策略必须排除"更多"折叠区（可能混入社区名）', () => {
     const byName = name => SUBJECT_STRATEGIES.find(strategy => strategy.name === name);
-    // 左侧栏列出作者全部专栏、与本文无关 → 泛化兜底必须排除
-    assert.equal(byName('category-href-link').exclude, ASIDE_SELECTOR);
-    // "更多"折叠区可能混入社区名 → 所有徽标策略都必须排除
     assert.equal(byName('header-collect-badge-name').exclude, MORE_BTN_SELECTOR);
     assert.equal(byName('header-badge-name').exclude, MORE_BTN_SELECTOR);
     assert.equal(byName('header-collect-badge-name-loose').exclude, MORE_BTN_SELECTOR);
+});
+
+test('策略列表：attrOnly 策略必须声明 attr，且只取 data-title（不用 data-description）', () => {
+    for (const strategy of SUBJECT_STRATEGIES) {
+        if (strategy.attrOnly) {
+            assert.ok(strategy.attr, `${strategy.name} 声明了 attrOnly 却没有 attr`);
+        }
+    }
+    const directory = SUBJECT_STRATEGIES.find(strategy => strategy.name === 'column-directory-title');
+    assert.equal(directory.attr, 'data-title');
+    assert.equal(directory.attrOnly, true);
+    assert.ok(!directory.selector.includes('data-description'));
 });
 
 test('付费专栏页：命中付费专栏卡的 title 属性', async () => {
@@ -245,17 +275,35 @@ test('排除规则：「更多」折叠区内的徽标（可能是社区名）�
     assert.deepEqual(result.rejected, [], '被排除的元素不应进入候选，也不该产生噪点日志');
 });
 
-test('排除规则：左侧栏「分类专栏」面板的链接被丢弃，取正文内的专栏链接', async () => {
+test('VIP 页：命中「专栏目录」按钮的 data-title（普通/收费/VIP 通吃）', async () => {
     const page = createPageStub({
-        [CATEGORY_HREF_SELECTOR]: [
-            // 左侧栏项：无 title，文本为 "计算机技术杂谈 付费"（若不过滤会被误当专栏）
-            el('计算机技术杂谈 付费', {}, [ASIDE_SELECTOR]),
-            el('', { title: '读书笔记' })
-        ]
+        [COLUMN_DIRECTORY_SELECTOR]: [el('专栏目录', {
+            'data-title': '计算机技术',
+            'data-description': '计算机技术',
+            'data-url': 'https://blog.csdn.net/zhiyuan411/category_11642677.html'
+        })]
     });
     const result = await extractArticleSubject(page);
-    assert.equal(result.subject, '读书笔记');
-    assert.equal(result.strategy, 'category-href-link');
+    assert.equal(result.subject, '计算机技术');
+    assert.equal(result.strategy, 'column-directory-title');
+});
+
+test('VIP 页：按钮类名变化时由 .tool-directory [data-title] 兜底', async () => {
+    const page = createPageStub({
+        [TOOL_DIRECTORY_SELECTOR]: [el('专栏目录', { 'data-title': '计算机技术' })]
+    });
+    const result = await extractArticleSubject(page);
+    assert.equal(result.subject, '计算机技术');
+    assert.equal(result.strategy, 'tool-directory-title');
+});
+
+test('VIP 页：data-title 缺失时不得回落成按钮文案「专栏目录」', async () => {
+    const page = createPageStub({
+        [COLUMN_DIRECTORY_SELECTOR]: [el('专栏目录', { 'data-title': '' })]
+    });
+    const result = await extractArticleSubject(page);
+    assert.equal(result.subject, null, '按钮文案不是主题');
+    assert.deepEqual(result.rejected, [], 'attrOnly 策略不应把按钮文案塞进候选');
 });
 
 test('头部下拉卡片：title 属性优先于文本（避免文本中的多余空白）', async () => {
@@ -294,13 +342,14 @@ test('旧版详情页：span.tit 作为旧版备选仍可用', async () => {
     assert.equal(result.strategy, 'legacy-span-tit');
 });
 
-test('泛化兜底：仅剩指向专栏页的链接时也能取到主题', async () => {
-    const page = createPageStub({
-        [CATEGORY_HREF_SELECTOR]: [el(''), el(' ', { title: '读书笔记' })]
-    });
-    const result = await extractArticleSubject(page);
-    assert.equal(result.subject, '读书笔记');
-    assert.equal(result.strategy, 'category-href-link');
+test('兜底链路失效时：返回 null 而不是把作者全部专栏当主题', async () => {
+    // 只存在「分类专栏」面板（作者全部专栏）的页面：任何策略都不应命中它
+    const result = await extractArticleSubject(createPageStub({
+        'a[href*="category_"]': [el('计算机技术杂谈 付费'), el('斜杠人生 付费')],
+        '.special-column-name': [el('计算机技术杂谈 付费')]
+    }));
+    assert.equal(result.subject, null);
+    assert.equal(result.strategy, null);
 });
 
 test('未收录任何专栏：返回 null，但不抛错、不产生误报候选', async () => {
